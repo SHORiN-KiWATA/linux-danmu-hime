@@ -19,10 +19,15 @@ pkgver() {
 
 build() {
   cd "$pkgname"
-  # ring 的汇编符号用 rust-lld 链接会找不到（ring_core_*__p256_mul_mont），
-  # 让 Rust 走系统 cc → GNU ld 就没这问题。
-  export RUSTFLAGS="${RUSTFLAGS:-} -C linker=cc"
-  cargo build --release --locked --bin damu-hime
+  # 干净全量编译是能过的，但 makepkg 会把 CFLAGS/LDFLAGS 这些导出来，
+  # ring 的汇编在这种环境下会编不出来（ring_core_*__p256_mul_mont 未定义）。
+  # 先把环境打出来（出问题时有据可查），再清掉这些变量编译。
+  echo "--- 构建环境里的编译器相关变量 ---"
+  env | grep -E '^(CFLAGS|CXXFLAGS|CPPFLAGS|LDFLAGS|RUSTFLAGS|CC|CXX|AR|MAKEFLAGS)=' || echo "（干净）"
+  echo "--- cc / ar ---"
+  cc --version | head -1; ar --version | head -1
+  env -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS -u RUSTFLAGS -u MAKEFLAGS \
+    cargo build --release --locked --bin damu-hime
 }
 
 package() {

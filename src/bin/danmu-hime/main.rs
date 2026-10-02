@@ -1539,6 +1539,15 @@ fn ensure_emote(tx: &Sender<UiEvent>, ch: char, url: &str) {
 /// 这条弹幕自带表情原图时（`emote`），表里没有的 token 也换成占位字符——
 /// 原图下好之后渲染层会用真图接管这个字符。
 fn expand_emotes_with(text: &str, emote: Option<&danmu_hime::protocol::Emote>) -> String {
+    // 直播间私有表情发射时正文不带方括号：整条弹幕的正文就是表情名字
+    // （例如只有「吃瓜」两个字），图在弹幕自带的 emote 里。
+    // 这种情况整条换成占位字符，等原图下好顶上来。
+    if let Some(emote) = emote {
+        let name = emote.text.trim_start_matches('[').trim_end_matches(']');
+        if !name.is_empty() && (text == name || text == format!("[{name}]")) {
+            return emote_placeholder(&format!("[{name}]")).to_string();
+        }
+    }
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(start) = rest.find('[') {
@@ -1552,7 +1561,10 @@ fn expand_emotes_with(text: &str, emote: Option<&danmu_hime::protocol::Emote>) -
         let name = &after[..end];
         match EMOTE_TABLE.iter().find(|(key, _)| *key == name) {
             Some((_, emoji)) => out.push_str(emoji),
-            None => match emote.filter(|emote| emote.text == format!("[{name}]")) {
+            None => match emote.filter(|emote| {
+                // 方括号可有可无，两边都先剥掉再比：公开表情带，直播间私有表情不带
+                emote.text.trim_start_matches('[').trim_end_matches(']') == name
+            }) {
                 // 表里没有，但这条弹幕带了原图：换成占位字符等图
                 Some(_) => out.push(emote_placeholder(&format!("[{name}]"))),
                 None => {

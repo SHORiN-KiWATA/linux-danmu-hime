@@ -1547,6 +1547,12 @@ fn expand_emotes_with(text: &str, emote: Option<&danmu_hime::protocol::Emote>) -
         if !name.is_empty() && (text == name || text == format!("[{name}]")) {
             return emote_placeholder(&format!("[{name}]")).to_string();
         }
+        // 官方大表情的正文就是表情名字（「妙啊」），而弹幕里带的「名字」是
+        // official_109 这种唯一 id，两边对不上：正文里没有别的方括号 token 时，
+        // 就认为整条正文就是这个表情。
+        if !text.is_empty() && !text.contains('[') && !name.is_empty() {
+            return emote_placeholder(&format!("[{name}]")).to_string();
+        }
     }
     let mut out = String::with_capacity(text.len());
     let mut rest = text;

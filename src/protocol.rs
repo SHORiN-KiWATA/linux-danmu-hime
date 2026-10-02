@@ -393,15 +393,31 @@ fn scan_emote(value: &serde_json::Value) -> Option<Emote> {
         }
         serde_json::Value::Array(items) => items.iter().find_map(scan_emote),
         serde_json::Value::Object(map) => {
+            let url = map
+                .get("url")
+                .and_then(serde_json::Value::as_str)
+                .filter(|url| is_emote_url(url));
             // 形式一：{"text": "[dog]", "url": "https://…/xxx.png"}
             if let (Some(text), Some(url)) = (
                 map.get("text").and_then(serde_json::Value::as_str),
-                map.get("url").and_then(serde_json::Value::as_str),
+                url,
             ) && is_emote_token(text)
-                && is_emote_url(url)
             {
                 return Some(Emote {
                     text: text.to_string(),
+                    url: url.to_string(),
+                });
+            }
+            // 形式三（官方大表情）：{"emoticon_unique": "official_109", "url": "…",
+            //                        "width": 138, "height": 60} —— 没有 text 字段，
+            // 拿唯一 id 当名字用（占位字符和下载都按它走）。
+            if let (Some(url), Some(unique)) = (
+                url,
+                map.get("emoticon_unique").and_then(serde_json::Value::as_str),
+            ) && !unique.is_empty()
+            {
+                return Some(Emote {
+                    text: format!("[{unique}]"),
                     url: url.to_string(),
                 });
             }
@@ -536,6 +552,22 @@ fn parse_interact(data: &serde_json::Value) -> Interact {
 
 #[cfg(test)]
 mod emote_tests {
+    #[test]
+    fn official_big_emote_has_no_text_field() {
+        // 用户实测：官方大表情只有 url/width/height + emoticon_unique，没有 text
+        let value = serde_json::json!({
+            "emoticon_unique": "official_109",
+            "height": 60,
+            "in_player_area": 1,
+            "is_dynamic": 1,
+            "url": "http://i0.hdslb.com/bfs/live/7b7a2567ad1520f962ee226df777eaf3ca368fbc.png",
+            "width": 138
+        });
+        let emote = scan_emote(&value).expect("官方大表情也要能认出来");
+        assert_eq!(emote.text, "[official_109]");
+        assert!(emote.url.ends_with(".png"));
+    }
+
     use super::*;
 
     fn danmaku_with(extra: serde_json::Value) -> Option<Emote> {

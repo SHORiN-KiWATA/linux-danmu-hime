@@ -70,6 +70,9 @@ chmod 0755 "$BINDIR/danmaku-config"
 install -m 0644 "$HERE/io.github.shorin_kiwata.DanmakuOverlayConfig.desktop" "$APPS/"
 install -m 0644 "$HERE/io.github.shorin_kiwata.DanmakuOverlay.desktop" "$APPS/"
 install -m 0644 "$HERE/icons/io.github.shorin_kiwata.DanmakuOverlayConfig.png" "$ICONS/"
+install -d "$PREFIX/share/icons/hicolor/scalable/apps"
+install -m 0644 "$HERE/icons/io.github.shorin_kiwata.DanmakuOverlay.svg" \
+    "$PREFIX/share/icons/hicolor/scalable/apps/io.github.shorin_kiwata.DanmakuOverlay.svg"
 
 cat >"$UNITDIR/danmaku-overlay.service" <<UNIT
 [Unit]

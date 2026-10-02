@@ -1,6 +1,6 @@
 # Maintainer: SHORiN-KiWATA <shorin@example.com>
 pkgname=linux-danmu-hime
-pkgver=r15.6290844
+pkgver=r16.a1103e2
 pkgrel=1
 pkgdesc="bilibili 直播弹幕浮层（wlr-layer-shell）+ GTK4 设置界面"
 arch=('x86_64' 'aarch64')
@@ -38,6 +38,8 @@ package() {
   install -Dm0755 target/release/damu-hime "$pkgdir/usr/bin/damu-hime"
   install -Dm0755 gui/damu-hime-config "$pkgdir/usr/bin/damu-hime-config"
   install -d "$pkgdir/usr/lib/$pkgname"
+  # 别把源码树里的 __pycache__ 也装进去
+  find gui/danmaku_config -name __pycache__ -type d -prune -exec rm -rf {} +
   cp -r gui/danmaku_config "$pkgdir/usr/lib/$pkgname/"
   install -Dm0644 gui/io.github.shorin_kiwata.DamuHime.desktop \
     "$pkgdir/usr/share/applications/io.github.shorin_kiwata.DamuHime.desktop"

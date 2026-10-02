@@ -900,6 +900,15 @@ impl Overlay {
                 return;
             }
         };
+        // 文本里出现内置表情（本地测试弹幕也算）就先把它下下来——弹幕自带
+        // url 的情况在弹幕线程里已经排过队了，这里主要照顾没有 url 的场景。
+        if kind == Kind::Danmaku
+            && let Some(tx) = self.ui_tx.clone()
+        {
+            for (token, url) in seed_emotes_in(&text) {
+                ensure_emote(&tx, emote_placeholder(&token), &url);
+            }
+        }
         self.entries.push_back(Entry {
             kind,
             prefix,
@@ -1299,9 +1308,6 @@ fn spawn_danmaku(room_id: i64, cookies: Cookies, tx: Sender<UiEvent>) {
             let _ = tx.send(UiEvent::Notice("创建 tokio runtime 失败".into()));
             return;
         };
-        let handle = runtime.handle().clone();
-        let seen_emotes: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<char>>> =
-            std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
         runtime.block_on(async move {
             let (inner_tx, mut inner_rx) = tokio::sync::mpsc::unbounded_channel();
             tokio::spawn(DanmakuClient::new(room_id, cookies).run(inner_tx));
@@ -1344,13 +1350,7 @@ fn spawn_danmaku(room_id: i64, cookies: Cookies, tx: Sender<UiEvent>) {
                         if let DanmakuEvent::Danmaku(danmaku) = &event
                             && let Some(emote) = &danmaku.emote
                         {
-                            spawn_emote_download(
-                                &handle,
-                                &tx,
-                                &seen_emotes,
-                                emote_placeholder(&emote.text),
-                                &emote.url,
-                            );
+                            ensure_emote(&tx, emote_placeholder(&emote.text), &emote.url);
                         }
                         match to_line(event) {
                             Some((prefix, text)) => UiEvent::Danmaku { prefix, text },
@@ -1428,6 +1428,38 @@ const EMOTE_TABLE: &[(&str, &str)] = &[
     ("大哭大闹", "\u{1F62D}"),
 ];
 
+/// 官方表情面板（登录后在 web 端能看到的那份）的「名字 → 原图」，构建时嵌进来。
+/// 弹幕里没带 url 的情况（本地测试弹幕、某些客户端的弹幕）就靠它。
+const EMOTE_SEED_JSON: &str = include_str!("emotes.json");
+
+fn seed_emotes() -> &'static std::collections::HashMap<String, String> {
+    static SEED: std::sync::OnceLock<std::collections::HashMap<String, String>> =
+        std::sync::OnceLock::new();
+    SEED.get_or_init(|| serde_json::from_str(EMOTE_SEED_JSON).unwrap_or_default())
+}
+
+/// 这段文字里出现了哪些内置表情（token, url）。用于本地测试弹幕这种没有 url 的场景。
+fn seed_emotes_in(text: &str) -> Vec<(String, String)> {
+    let seed = seed_emotes();
+    let mut found = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find('[') {
+        let after = &rest[start + 1..];
+        let Some(end) = after.find(']').filter(|end| *end <= 16) else {
+            rest = after;
+            continue;
+        };
+        let token = format!("[{}]", &after[..end]);
+        if let Some(url) = seed.get(&token)
+            && !found.iter().any(|(seen, _): &(String, String)| *seen == token)
+        {
+            found.push((token, url.clone()));
+        }
+        rest = &after[end + 1..];
+    }
+    found
+}
+
 /// 表情 token 对应的占位字符。
 ///
 /// - 表里有的（`[dog]` 这种）用表里那个 emoji：字体的 emoji 被 B 站原图顶掉，
@@ -1458,13 +1490,11 @@ fn emote_cache_dir() -> Option<std::path::PathBuf> {
 }
 
 /// 拉一张表情图：缓存里有就直接发给主线程，没有就后台下一张、下好再发。
-fn spawn_emote_download(
-    handle: &tokio::runtime::Handle,
-    tx: &Sender<UiEvent>,
-    seen: &std::sync::Arc<std::sync::Mutex<std::collections::HashSet<char>>>,
-    ch: char,
-    url: &str,
-) {
+fn ensure_emote(tx: &Sender<UiEvent>, ch: char, url: &str) {
+    // 同一个字符只下一次（主线程和弹幕线程共用这一份）
+    static SEEN: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<char>>> =
+        std::sync::OnceLock::new();
+    let seen = SEEN.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()));
     if !seen.lock().unwrap_or_else(|err| err.into_inner()).insert(ch) {
         return;
     }
@@ -1479,9 +1509,14 @@ fn spawn_emote_download(
         });
         return;
     }
+    // 单独的线程里跑：lib 的 runtime 是 current_thread 的，在别处 spawn 出去
+    // 没人驱动它；浮层主线程和弹幕线程又都不适合做阻塞 IO。
     let (tx, url) = (tx.clone(), url.to_string());
-    handle.spawn(async move {
-        match danmu_hime::api::fetch_image(&url).await {
+    std::thread::spawn(move || {
+        let Ok(runtime) = danmu_hime::runtime() else {
+            return;
+        };
+        match runtime.block_on(danmu_hime::api::fetch_image(&url)) {
             Ok(bytes) => {
                 if let Some(path) = &cached
                     && let Some(dir) = path.parent()
@@ -1906,6 +1941,26 @@ fn wakeup_for(age: Duration, ttl: Duration, fade: Duration) -> Duration {
 #[cfg(test)]
 mod emote_tests {
     use super::*;
+
+    #[test]
+    fn bundled_table_knows_common_emotes() {
+        let seed = seed_emotes();
+        assert!(seed.len() > 100, "内置表太小了：{}", seed.len());
+        for token in ["[doge]", "[大笑]", "[吃瓜]"] {
+            let url = seed.get(token).unwrap_or_else(|| panic!("内置表里没有 {token}"));
+            assert!(url.ends_with(".png"), "{token} 的 url 不像原图：{url}");
+        }
+    }
+
+    #[test]
+    fn seed_scan_finds_tokens_in_text() {
+        let found = seed_emotes_in("好耶[doge]再来一个[大笑]");
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0].0, "[doge]");
+        assert_eq!(found[1].0, "[大笑]");
+        // 没听过的表情、半个方括号都不算
+        assert!(seed_emotes_in("看这个[没听过的]和[半个").is_empty());
+    }
 
     #[test]
     fn table_emotes_use_the_emoji_from_the_table() {

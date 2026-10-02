@@ -1,6 +1,6 @@
 # Maintainer: SHORiN-KiWATA <shorin@example.com>
 pkgname=linux-danmu-hime
-pkgver=r12.5013171
+pkgver=r14.21045da
 pkgrel=1
 pkgdesc="bilibili 直播弹幕浮层（wlr-layer-shell）+ GTK4 设置界面"
 arch=('x86_64' 'aarch64')
@@ -9,6 +9,9 @@ license=('MIT')
 depends=('glibc' 'gcc-libs' 'fontconfig' 'wayland' 'libxkbcommon' 'gtk4' 'libadwaita' 'python-gobject' 'python-cairo' 'systemd')
 optdepends=('qrencode: 扫码登录显示二维码' 'noto-fonts-emoji: 彩色 emoji')
 makedepends=('cargo' 'git')
+# ring 的汇编和 LTO 合不来（符号会被编成 LTO 中间产物，链接时找不到），
+# 这个包单独关掉 LTO。
+options=('!lto')
 source=("$pkgname::git+$url.git")
 sha256sums=('SKIP')
 

@@ -1,6 +1,6 @@
 """通过 systemd --user 控制浮层：启动/停止/重启/开机自启。
 
-单元文件由 gui/install.sh 生成（~/.config/systemd/user/danmaku-overlay.service）。
+单元文件由 gui/install.sh 生成（~/.config/systemd/user/damu-hime.service）。
 """
 
 from __future__ import annotations
@@ -8,7 +8,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 
-UNIT = "danmaku-overlay.service"
+UNIT = "damu-hime.service"
 LOG_COMMAND = f"journalctl --user -u {UNIT} -f"
 
 

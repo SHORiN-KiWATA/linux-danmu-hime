@@ -1,0 +1,38 @@
+# Maintainer: SHORiN-KiWATA <shorin@example.com>
+pkgname=linux-danmu-hime
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="bilibili 直播弹幕浮层（wlr-layer-shell）+ GTK4 设置界面"
+arch=('x86_64' 'aarch64')
+url="https://github.com/SHORiN-KiWATA/linux-danmu-hime"
+license=('MIT')
+depends=('glibc' 'gcc-libs' 'fontconfig' 'wayland' 'libxkbcommon' 'gtk4' 'libadwaita' 'python-gobject' 'python-cairo' 'systemd')
+optdepends=('qrencode: 扫码登录显示二维码' 'noto-fonts-emoji: 彩色 emoji')
+makedepends=('cargo' 'git')
+source=("$pkgname::git+$url.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$pkgname"
+  printf 'r%s.%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+build() {
+  cd "$pkgname"
+  cargo build --release --locked --bin damu-hime
+}
+
+package() {
+  cd "$pkgname"
+  install -Dm0755 target/release/damu-hime "$pkgdir/usr/bin/damu-hime"
+  install -Dm0755 gui/damu-hime-config "$pkgdir/usr/bin/damu-hime-config"
+  install -d "$pkgdir/usr/lib/$pkgname"
+  cp -r gui/danmaku_config "$pkgdir/usr/lib/$pkgname/"
+  install -Dm0644 gui/io.github.shorin_kiwata.DamuHime.desktop \
+    "$pkgdir/usr/share/applications/io.github.shorin_kiwata.DamuHime.desktop"
+  install -Dm0644 gui/icons/io.github.shorin_kiwata.DanmakuOverlay.svg \
+    "$pkgdir/usr/share/icons/hicolor/scalable/apps/io.github.shorin_kiwata.DanmakuOverlay.svg"
+  install -Dm0644 gui/icons/io.github.shorin_kiwata.DanmakuOverlayConfig.png \
+    "$pkgdir/usr/share/icons/hicolor/128x128/apps/io.github.shorin_kiwata.DanmakuOverlayConfig.png"
+  install -Dm0644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

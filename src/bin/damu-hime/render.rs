@@ -33,6 +33,8 @@ pub struct DrawLine {
     pub alpha: f32,
     /// 0..1 入场进度：1 = 已经在位置上，小于 1 的话这一条从下面滑上来。
     pub enter: f32,
+    /// 0..1 收拢进度：淡完之后占的高度从一行收到 0，让上面的行滑下去而不是跳。
+    pub collapse: f32,
 }
 
 pub struct Theme {
@@ -54,7 +56,7 @@ impl Default for Theme {
     fn default() -> Self {
         Self {
             font_size: 30.0,
-            panel_alpha: 0.4,
+            panel_alpha: 0.6,
             name_color: (255, 229, 138),
             text_color: (255, 255, 255),
             panel_rgb: (0, 0, 0),
@@ -212,6 +214,7 @@ impl Renderer {
                     indent: if index == 0 { 0.0 } else { indent },
                     text: chunk,
                     enter: line.enter,
+                    collapse: line.collapse,
                 });
             }
         }
@@ -230,7 +233,8 @@ impl Renderer {
             text: text.to_string(),
             alpha: 1.0,
             enter: 1.0,
-        };
+                collapse: 1.0,
+            };
         self.layout_rows(&font, width as f32, &[&line]).len().max(1)
     }
 
@@ -256,7 +260,11 @@ impl Renderer {
         // 整块随 scroll 往下偏，超出画布下沿的部分自然被裁掉——新弹幕就是
         // 这么从屏幕下沿挤进来的。
         let count = rows.len() as f32;
-        let panel_height = count * line_height + (count - 1.0) * gap + pad_y * 2.0;
+        let heights: f32 = rows
+            .iter()
+            .map(|row| line_height * row.collapse.clamp(0.0, 1.0))
+            .sum();
+        let panel_height = heights + (count - 1.0) * gap + pad_y * 2.0;
         let panel_top = height + scroll - panel_height;
         let panel_alpha = lines
             .iter()
@@ -282,14 +290,20 @@ impl Renderer {
         let mut bottom = height + scroll - pad_y;
         let enter_shift = self.step();
         for row in rows.iter().rev() {
-            let top = bottom - line_height;
+            let row_h = line_height * row.collapse.clamp(0.0, 1.0);
+            if row_h <= 0.5 {
+                // 已经收完了：留着占位没意义，往下继续排
+                bottom -= gap;
+                continue;
+            }
+            let top = bottom - row_h;
             if top < 0.0 {
                 break;
             }
             // 新来的那条：还差多少入场，就往下偏多少（画布下沿自然裁掉）
             let slide = (1.0 - row.enter.clamp(0.0, 1.0)) * enter_shift;
             let alpha = row.alpha.clamp(0.0, 1.0);
-            let baseline = top + slide + line_height * 0.5 + size * 0.35;
+            let baseline = top + slide + row_h * 0.5 + size * 0.35;
             let mut cursor = pad_x + row.indent;
             let max_x = width - pad_x;
             if !row.prefix.is_empty() {
@@ -325,6 +339,7 @@ impl Renderer {
 struct Row {
     kind: Kind,
     alpha: f32,
+    collapse: f32,
     /// 0..1 入场进度（新弹幕从下面滑上来）
     enter: f32,
     /// 只有第一行带前缀，续行是空的（并且缩进）。
@@ -729,6 +744,7 @@ mod tests {
             text: text.into(),
             alpha: 1.0,
             enter: 1.0,
+            collapse: 1.0,
         }
     }
 
@@ -788,6 +804,7 @@ mod tests {
                 text: "淡出".into(),
                 alpha,
                 enter: 1.0,
+                collapse: 1.0,
             }]
         };
         let peak = |pixels: Vec<u8>| {
@@ -814,7 +831,8 @@ mod tests {
             text: "新弹幕从下面滑上来".to_string(),
             alpha: 1.0,
             enter,
-        };
+                collapse: 1.0,
+            };
         // 还没入场：这条基本贴着画布下沿（大部分被裁掉），亮字比落位时少很多
         let bright = |pixels: &[u8]| {
             pixels
@@ -850,6 +868,7 @@ mod tests {
                 text: "b".into(),
                 alpha: 1.0,
                 enter: 1.0,
+                collapse: 1.0,
             }],
             0.0,
         );
@@ -875,6 +894,7 @@ mod tests {
                 text: "😀".into(),
                 alpha: 1.0,
                 enter: 1.0,
+                collapse: 1.0,
             }],
             0.0,
         );
@@ -900,7 +920,8 @@ mod tests {
             text: String::new(),
             alpha: 1.0,
             enter: 1.0,
-        }];
+                collapse: 1.0,
+            }];
         let pixels = renderer.render(160, 60, &lines, 0.0);
         let count = |want: [u8; 3]| {
             pixels

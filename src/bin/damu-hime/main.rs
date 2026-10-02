@@ -1110,7 +1110,9 @@ impl Overlay {
         self.poll_test_danmaku();
         self.advance(now);
         let before = self.entries.len();
-        let life = self.ttl + self.fade;
+        // 生命 = 抖动后的停留 + 淡出 + 收拢动画
+        // 抖动最多 +15%，这里按最长的那条算，免得它还没收拢就被摘掉
+        let life = self.ttl.mul_f32(1.15) + self.fade + COLLAPSE;
         self.entries
             .retain(|entry| now.saturating_duration_since(entry.received) < life);
         if self.entries.len() != before {
@@ -1157,21 +1159,44 @@ impl Overlay {
             .into_iter()
             .filter_map(|entry| {
                 let alpha = self.alpha_of(entry, now);
-                (alpha > 0.01).then(|| DrawLine {
+                // 淡完之后还要留一会儿做「收拢」动画：不然后面那些行会一帧跳一格
+                (alpha > 0.01 || self.collapse_of(entry, now) > 0.0).then(|| DrawLine {
                     kind: entry.kind,
                     prefix: entry.prefix.clone(),
                     text: entry.text.clone(),
                     alpha,
                     // 刚来的那条从下面滑上来（跟淡入同一段时间）
                     enter: fade_in_alpha(now.saturating_duration_since(entry.received)),
+                    collapse: self.collapse_of(entry, now),
                 })
             })
             .collect()
     }
 
+    /// 每条弹幕的停留时间稍微抖一下（±15%），同一批就不会挤在同一帧集体消失。
+    fn ttl_of(&self, entry: &Entry) -> Duration {
+        let hash: u32 = entry
+            .text
+            .bytes()
+            .fold(7u32, |acc, byte| acc.wrapping_mul(31).wrapping_add(byte as u32));
+        let factor = 0.85 + 0.0003 * (hash % 1000) as f32;
+        self.ttl.mul_f32(factor)
+    }
+
     fn alpha_of(&self, entry: &Entry, now: Instant) -> f32 {
         let age = now.saturating_duration_since(entry.received);
-        fade_alpha(age, self.ttl, self.fade).min(fade_in_alpha(age))
+        fade_alpha(age, self.ttl_of(entry), self.fade).min(fade_in_alpha(age))
+    }
+
+    /// 0..1：淡完之后再用 200ms 把这一条占的高度收掉，上面的行是滑下去而不是跳。
+    fn collapse_of(&self, entry: &Entry, now: Instant) -> f32 {
+        let age = now.saturating_duration_since(entry.received);
+        let settle = self.ttl_of(entry) + self.fade;
+        if age <= settle {
+            return 1.0;
+        }
+        let t = (age - settle).as_secs_f32() / COLLAPSE.as_secs_f32();
+        1.0 - (3.0 * t * t - 2.0 * t * t * t).clamp(0.0, 1.0)
     }
 
     fn redraw_if_dirty(&mut self, qh: &QueueHandle<Self>) {
@@ -1748,6 +1773,8 @@ fn fading(age: Duration, ttl: Duration) -> bool {
 
 /// 新弹幕淡入的时长。
 const FADE_IN: Duration = Duration::from_millis(250);
+/// 淡完之后收拢这一行占的高度用多久。
+const COLLAPSE: Duration = Duration::from_millis(200);
 
 /// 刚出现时的透明度：0.25 秒里从 0 到 1（用 smoothstep，比线性柔）。
 fn fade_in_alpha(age: Duration) -> f32 {

@@ -2,12 +2,12 @@
 # 把 GUI 装到 ~/.local，并生成浮层的 systemd 用户单元。
 #
 #   ./install.sh                     # 浮层二进制自动找（仓库 target/release 或 PATH）
-#   ./install.sh --overlay /path/to/danmaku-overlay
+#   ./install.sh --overlay /path/to/damu-hime
 set -euo pipefail
 
 PREFIX="${PREFIX:-$HOME/.local}"
 BINDIR="$PREFIX/bin"
-APPDIR="$PREFIX/share/danmaku-config"
+APPDIR="$PREFIX/share/damu-hime-config"
 APPS="$PREFIX/share/applications"
 ICONS="$PREFIX/share/icons/hicolor/128x128/apps"
 UNITDIR="$HOME/.config/systemd/user"
@@ -33,9 +33,9 @@ done
 
 if [ -z "$overlay" ]; then
     for candidate in \
-        "$HERE/../target/release/danmaku-overlay" \
-        "$HERE/target/release/danmaku-overlay" \
-        "$(command -v danmaku-overlay || true)"; do
+        "$HERE/../target/release/damu-hime" \
+        "$HERE/target/release/damu-hime" \
+        "$(command -v damu-hime || true)"; do
         if [ -n "$candidate" ] && [ -x "$candidate" ]; then
             overlay="$candidate"
             break
@@ -43,7 +43,7 @@ if [ -z "$overlay" ]; then
     done
 fi
 if [ -z "$overlay" ]; then
-    echo "找不到 danmaku-overlay，先 cargo build --release，或用 --overlay 指定" >&2
+    echo "找不到 damu-hime，先 cargo build --release，或用 --overlay 指定" >&2
     exit 1
 fi
 overlay="$(readlink -f "$overlay")"
@@ -51,11 +51,11 @@ overlay="$(readlink -f "$overlay")"
 echo "浮层二进制：$overlay"
 mkdir -p "$BINDIR" "$APPDIR" "$APPS" "$ICONS" "$UNITDIR"
 # 符号链接而不是拷贝：以后重新 cargo build 就是新的
-ln -sf "$overlay" "$BINDIR/danmaku-overlay"
+ln -sf "$overlay" "$BINDIR/damu-hime"
 
 rm -rf "$APPDIR/danmaku_config"
 cp -r "$HERE/danmaku_config" "$APPDIR/"
-cat >"$BINDIR/danmaku-config" <<LAUNCH
+cat >"$BINDIR/damu-hime-config" <<LAUNCH
 #!/usr/bin/env python3
 import sys
 
@@ -66,15 +66,12 @@ from danmaku_config.app import main
 if __name__ == "__main__":
     sys.exit(main())
 LAUNCH
-chmod 0755 "$BINDIR/danmaku-config"
+chmod 0755 "$BINDIR/damu-hime-config"
 install -m 0644 "$HERE/io.github.shorin_kiwata.DanmakuOverlayConfig.desktop" "$APPS/"
 install -m 0644 "$HERE/io.github.shorin_kiwata.DanmakuOverlay.desktop" "$APPS/"
 install -m 0644 "$HERE/icons/io.github.shorin_kiwata.DanmakuOverlayConfig.png" "$ICONS/"
-install -d "$PREFIX/share/icons/hicolor/scalable/apps"
-install -m 0644 "$HERE/icons/io.github.shorin_kiwata.DanmakuOverlay.svg" \
-    "$PREFIX/share/icons/hicolor/scalable/apps/io.github.shorin_kiwata.DanmakuOverlay.svg"
 
-cat >"$UNITDIR/danmaku-overlay.service" <<UNIT
+cat >"$UNITDIR/damu-hime.service" <<UNIT
 [Unit]
 Description=bilibili 直播弹幕浮层
 After=graphical-session.target
@@ -82,7 +79,7 @@ PartOf=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=$BINDIR/danmaku-overlay
+ExecStart=$BINDIR/damu-hime
 Restart=on-failure
 RestartSec=3
 Slice=session.slice
@@ -98,11 +95,11 @@ update-desktop-database "$APPS" >/dev/null 2>&1 || true
 
 cat <<EOF
 装好了：
-  设置界面    $BINDIR/danmaku-config      （应用菜单里叫「弹幕浮层设置」）
-  浮层        $BINDIR/danmaku-overlay     → $overlay
+  设置界面    $BINDIR/damu-hime-config      （应用菜单里叫「弹幕浮层设置」）
+  浮层        $BINDIR/damu-hime     → $overlay
   配置        \${XDG_CONFIG_HOME:-$HOME/.config}/bilibili-danmaku/config.json
-  服务单元    $UNITDIR/danmaku-overlay.service
+  服务单元    $UNITDIR/damu-hime.service
 
 开机自启：设置界面第一页的「开机自启」开关，或者
-  systemctl --user enable --now danmaku-overlay.service
+  systemctl --user enable --now damu-hime.service
 EOF

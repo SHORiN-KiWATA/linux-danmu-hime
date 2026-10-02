@@ -508,9 +508,10 @@ fn draw_text(
         // 挂了 B 站原图的字符（含哈希出来的私用区占位符）一律先画原图：
         // 主字体里有没有这个字都无所谓，宽度统一按一个 em 算，免得字体给 0 宽度。
         if self.emote_sources.borrow().contains_key(&ch) {
-            if advance < size * 0.5 {
-                advance = size;
-            }
+            // 这个字符画的是 B 站原图，宽度就按一个汉字（1em）算：
+            // 私用区字符的 .notdef 宽度由字体决定（实测能到 2.3em），
+            // 拿它当宽度会把表情拉得又宽又扁。
+            advance = size;
             self.draw_emoji(pixmap, ch, *x, baseline, advance, alpha);
             *x += advance;
             prev = Some(id);
@@ -599,7 +600,8 @@ impl Renderer {
             return hit.clone();
         }
         let source = self.emote_sources.borrow().get(&ch).cloned()?;
-        let factor = max_width / source.width as f32;
+        // 等比缩放：按长边缩，长条形的大表情也不会被拉变形
+        let factor = max_width / source.width.max(source.height) as f32;
         let width = ((source.width as f32 * factor).round() as u32).max(1);
         let height = ((source.height as f32 * factor).round() as u32).max(1);
         let built = Some(Rc::new(Emoji {
@@ -756,6 +758,48 @@ mod tests {
             .filter(|px| px[2] > 200 && px[0] < 80 && px[3] > 200)
             .count();
         assert!(red > 20, "红色像素太少（{red}），原图没画上去");
+    }
+
+    /// 量一下真表情画出来的墨迹范围：本地缓存里有就用真的，没有就跳过。
+    #[test]
+    fn emote_ink_stays_within_its_box() {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let mut file = None;
+        if let Ok(entries) = std::fs::read_dir(format!("{home}/.cache/danmu-hime/emotes")) {
+            for entry in entries.flatten() {
+                if entry.path().extension().is_some_and(|ext| ext == "png") {
+                    file = std::fs::read(entry.path()).ok();
+                    if file.is_some() {
+                        break;
+                    }
+                }
+            }
+        }
+        let Some(bytes) = file else {
+            return; // 没缓存就算了（别人的机器上不会有）
+        };
+        let renderer = renderer();
+        let ch = '\u{E0F1}';
+        assert!(renderer.load_emote(ch, &bytes), "缓存里的表情应该能解开");
+        let (width, height) = (400usize, 60u32);
+        let pixels = renderer.render(width as u32, height, &[line(&ch.to_string())], 0.0);
+        let (mut min_x, mut max_x, mut min_y, mut max_y) = (usize::MAX, 0usize, usize::MAX, 0usize);
+        for (i, px) in pixels.chunks_exact(4).enumerate() {
+            // 只看亮的像素：底板是黑色半透明，会被这一条排除掉
+            if px[3] > 200 && (px[0] as u32 + px[1] as u32 + px[2] as u32) > 240 {
+                let (x, y) = (i % width, i / width);
+                min_x = min_x.min(x);
+                max_x = max_x.max(x);
+                min_y = min_y.min(y);
+                max_y = max_y.max(y);
+            }
+        }
+        println!(
+            "表情墨迹：x {min_x}..={max_x}（宽 {}） y {min_y}..={max_y}（高 {}）",
+            max_x - min_x + 1,
+            max_y - min_y + 1
+        );
+        assert!(min_x >= 18, "表情左边跑出内边距了：{min_x}（内边距 21px）");
     }
 
     #[test]

@@ -1,6 +1,6 @@
 pkgbase = linux-danmu-hime
 	pkgdesc = bilibili 直播弹幕浮层（wlr-layer-shell）+ GTK4 设置界面
-	pkgver = r23.1599bb8
+	pkgver = r25.2040c5e
 	pkgrel = 1
 	url = https://github.com/SHORiN-KiWATA/linux-danmu-hime
 	arch = x86_64

@@ -40,7 +40,7 @@ class ConfigTest(unittest.TestCase):
     def test_missing_file_gives_defaults(self) -> None:
         values = self.config.load()
         self.assertEqual(values["anchor"], "bottom-right")
-        self.assertEqual(values["font_size"], 20.0)
+        self.assertEqual(values["font_size"], 30.0)
         self.assertIsNone(values["emoji_font"])
 
     def test_save_then_load_round_trip(self) -> None:
@@ -61,16 +61,16 @@ class ConfigTest(unittest.TestCase):
         path = self.config.config_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("{ 这不是 json", encoding="utf-8")
-        self.assertEqual(self.config.load()["width"], 420)
+        self.assertEqual(self.config.load()["width"], 381)
 
     def test_restart_only_changes(self) -> None:
-        old = {"room": "1", "font": None, "font_size": 20.0}
+        old = {"room": "1", "font": None, "font_size": 30.0}
         new = {"room": "2", "font": None, "font_size": 24.0}
         self.assertEqual(self.config.restart_only_changed(old, new), ["room"])
 
     def test_live_change_is_not_restart_only(self) -> None:
         old = self.config.load()
-        new = dict(old, opacity=0.3, ttl=20.0)
+        new = dict(old, opacity=0.3, ttl=30.0)
         self.assertEqual(self.config.restart_only_changed(old, new), [])
 
 

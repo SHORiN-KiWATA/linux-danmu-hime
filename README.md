@@ -5,7 +5,7 @@
 
 <p align="center">
   <img src="docs/logo.png" width="140" alt="logo">
-  <img src="docs/demo.png" width="520" alt="演示">
+  <img src="docs/demo.png" width="420" alt="演示：浮层里的弹幕（含 test 弹幕、换行、emoji）">
 </p>
 
 ## 装

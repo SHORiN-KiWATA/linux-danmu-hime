@@ -1,6 +1,6 @@
 # Maintainer: SHORiN-KiWATA <shorin@example.com>
 pkgname=linux-danmu-hime
-pkgver=r8.a486bc6
+pkgver=r9.5cf784d
 pkgrel=1
 pkgdesc="bilibili 直播弹幕浮层（wlr-layer-shell）+ GTK4 设置界面"
 arch=('x86_64' 'aarch64')

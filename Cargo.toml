@@ -1,0 +1,46 @@
+[package]
+name = "bilibili-danmaku"
+version = "0.1.0"
+edition = "2024"
+description = "抓 B 站直播间弹幕：核心库 + 命令行 dump + Wayland layer-shell 浮层"
+
+[lib]
+name = "bilibili_danmaku"
+path = "src/lib.rs"
+
+[[bin]]
+name = "danmaku-dump"
+path = "src/bin/danmaku-dump.rs"
+
+[dependencies]
+ab_glyph = "0.2.32"
+anyhow = "1.0.104"
+chrono = "0.4.45"
+flate2 = "1.1.10"
+futures-util = "0.3.34"
+md5 = "0.8.1"
+memmap2 = "0.9.11"
+# 只做几个 GET：不需要 http2 / 系统代理探测 / 字符集嗅探。
+# 也不用 reqwest 默认的 aws-lc-rs（几 MB C 代码），换成 ring 这一个 provider。
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "query", "rustls-no-provider"] }
+rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+# 浮层不抢键盘，所以关掉默认的 xkbcommon：省掉 pkg-config 和 C 依赖，
+# 交叉编译 musl 时也不会再被它的 build.rs 拦下来。
+smithay-client-toolkit = { version = "0.21.1", default-features = false, features = ["calloop"] }
+tiny-skia = "0.12.0"
+tokio = { version = "1.53.1", features = ["rt", "macros", "sync", "time"] }
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
+urlencoding = "2.1.3"
+wayland-client = "0.31.15"
+wayland-protocols = { version = "0.32.13", default-features = false, features = ["client"] }
+
+# 这个工具常驻后台挂着，体积/内存省着点：
+#   strip + fat LTO + 单 codegen unit 把二进制压小，panic=abort 去掉 unwinding 表
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

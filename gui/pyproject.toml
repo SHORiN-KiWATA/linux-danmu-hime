@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "danmaku-config"
+version = "0.1.0"
+description = "GTK4 GUI to configure the bilibili danmaku overlay"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+# 运行依赖是系统包，不走 pip：
+#   gtk4, libadwaita, python-gobject
+dependencies = []
+
+[project.scripts]
+danmaku-config = "danmaku_config.app:main"
+
+[tool.setuptools.packages.find]
+include = ["danmaku_config*"]

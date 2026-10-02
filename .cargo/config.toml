@@ -1,0 +1,6 @@
+# 日常用的静态构建：musl 静态链接，dump 的 RSS 约 2.9MB
+# 需要：pacman -S musl（提供 musl-gcc）+ rustup target add x86_64-unknown-linux-musl
+#
+# 两个 bin 都能这么打（SCTK 的 xkbcommon 特性关掉了，交叉编译不会再卡在 pkg-config）。
+[alias]
+static = "build --release --target x86_64-unknown-linux-musl"

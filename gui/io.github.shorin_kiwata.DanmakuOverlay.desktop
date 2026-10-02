@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Danmaku Overlay
+Name[zh_CN]=弹幕浮层
+Comment=bilibili live danmaku on the desktop
+Comment[zh_CN]=把 B 站直播弹幕挂在桌面上（由「弹幕浮层设置」调参数）
+Exec=danmaku-overlay
+Icon=io.github.shorin_kiwata.DanmakuOverlayConfig
+Terminal=false
+NoDisplay=true
+Categories=AudioVideo;

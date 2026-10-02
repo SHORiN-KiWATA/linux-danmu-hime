@@ -486,8 +486,9 @@ class ConfigWindow(Adw.ApplicationWindow):
         self.status_label = Gtk.Label()
         self.status_label.add_css_class("dim-label")
         self.status_label.add_css_class("caption")
+        self.status_icon = Gtk.Image.new_from_icon_name("media-record-symbolic")
         status_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        status_box.append(Gtk.Image.new_from_icon_name("media-record-symbolic"))
+        status_box.append(self.status_icon)
         status_box.append(self.status_label)
         header.pack_end(status_box)
 
@@ -850,10 +851,16 @@ class ConfigWindow(Adw.ApplicationWindow):
     def _sync_login(self) -> None:
         state, uid = config.login_state(self.values)
         if state == "logged-in":
-            self.login_badge.set_text(_("Logged in as {uid}").format(uid=uid or "?"))
+            self.login_badge.set_text(
+                _("Logged in as {uid}").format(uid=uid) if uid else _("Logged in")
+            )
+            self.login_badge.remove_css_class("dim-label")
+            self.login_badge.add_css_class("success")
             self.login_button.set_label(_("Log in again"))
         else:
             self.login_badge.set_text(_("Not logged in"))
+            self.login_badge.remove_css_class("success")
+            self.login_badge.add_css_class("dim-label")
             self.login_button.set_label(_("Scan to log in"))
 
     def _color_row(self, group: Adw.PreferencesGroup, key: str, title: str) -> None:
@@ -1012,6 +1019,20 @@ class ConfigWindow(Adw.ApplicationWindow):
         self.autostart_row.set_active(installed and service.is_enabled())
         self._loading = False
         self.status_label.set_text(text)
+        # 运行中要一眼看得出来：绿点 + 粗体；没跑就淡一点，未安装标红
+        for widget in (self.status_label, self.status_icon):
+            for cls in ("heading", "success", "warning", "error"):
+                widget.remove_css_class(cls)
+        if active:
+            for cls in ("caption", "dim-label"):
+                self.status_label.remove_css_class(cls)
+            self.status_label.add_css_class("heading")
+            self.status_icon.add_css_class("success")
+        else:
+            self.status_label.add_css_class("caption")
+            self.status_label.add_css_class("dim-label")
+            self.status_icon.add_css_class("warning" if installed else "error")
+        self._sync_login()   # 重启界面后也要按 cookie 显示「已登录」
         for button in (self.start_button, self.stop_button, self.restart_button):
             button.set_sensitive(installed)
         self.autostart_row.set_sensitive(installed)

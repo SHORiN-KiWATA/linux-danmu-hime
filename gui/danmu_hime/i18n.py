@@ -47,6 +47,7 @@ _ZH = {
     "No Hime login found": "没找到直播姬的登录状态",
     "Imported, restart the overlay": "导入好了；按 ⟳ 重启浮层才生效",
     "Logged in as {uid}": "已登录（uid {uid}）",
+    "Logged in": "已登录",
     "Not logged in": "未登录",
     "layer-short-top": "顶层",
     "layer-short-overlay": "覆盖层",

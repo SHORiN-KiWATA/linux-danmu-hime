@@ -3,7 +3,7 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "danmaku-config"
+name = "danmu-hime-config"
 version = "0.1.0"
 description = "GTK4 GUI to configure the bilibili danmaku overlay"
 readme = "README.md"
@@ -14,7 +14,7 @@ requires-python = ">=3.11"
 dependencies = []
 
 [project.scripts]
-danmaku-config = "danmaku_config.app:main"
+danmu-hime-config = "danmu_hime.app:main"
 
 [tool.setuptools.packages.find]
-include = ["danmaku_config*"]
+include = ["danmu_hime*"]

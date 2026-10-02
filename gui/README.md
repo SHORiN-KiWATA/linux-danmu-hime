@@ -1,6 +1,6 @@
 # 弹幕浮层设置（GUI）
 
-给 `danmaku-overlay` 用的设置界面，用 Python + GTK4/libadwaita 写的（照抄
+给 `danmu-hime` 用的设置界面，用 Python + GTK4/libadwaita 写的（照抄
 [niri-display-settings](https://github.com/shorin-kiwata/niri-display-settings) 的那套结构）。
 
 界面按**哔哩哔哩弹幕姬**的习惯来：字号、位置、停留时间这些**全都是滑块**，
@@ -11,16 +11,16 @@
 ## 跑起来
 
 ```bash
-./danmaku-config            # 直接跑（要装了 gtk4 / libadwaita / python-gobject）
+./danmu-hime-config            # 直接跑（要装了 gtk4 / libadwaita / python-gobject）
 ./install.sh                # 装到 ~/.local，生成 systemd 用户单元
 ```
 
 `install.sh` 之后：
 
 - 应用菜单里多一个「**弹幕浮层设置**」（`~/.local/share/applications/`）
-- `~/.local/bin/danmaku-config` 和 `~/.local/bin/danmaku-overlay`
-  （后者是**符号链接**到你的 `target/release/danmaku-overlay`，重新 build 就是新的）
-- `~/.config/systemd/user/danmaku-overlay.service`（「运行」页的开关就是它）
+- `~/.local/bin/danmu-hime-config` 和 `~/.local/bin/danmu-hime`
+  （后者是**符号链接**到你的 `target/release/danmu-hime`，重新 build 就是新的）
+- `~/.config/systemd/user/danmu-hime.service`（「运行」页的开关就是它）
 
 ## 界面
 
@@ -54,7 +54,7 @@ platform: "web", type: 2, key }` 里发的是登录 uid）。
 没有 IPC：GUI 把设置写进
 
 ```
-~/.config/bilibili-danmaku/config.json
+~/.config/danmu-hime/config.json
 ```
 
 （原子写：先写临时文件再 rename，免得浮层读到半截 JSON。）浮层启动时读这个文件，
@@ -75,7 +75,7 @@ room  cookie  output  font  emoji_font
 python3 -m unittest discover -s tests     # 或者 pytest tests
 ```
 
-- `danmaku_config/config.py`：读写那份 JSON（键跟 Rust 那边的 `FileConfig` 一一对应）
-- `danmaku_config/service.py`：`systemctl --user` 的薄壳
-- `danmaku_config/window.py`：界面；滑块/九宫格都在 `_add_slider`、`_page_position` 里
-- `danmaku_config/i18n.py`：中英文字符串表（认 `LANG=zh_*`）
+- `danmu_hime/config.py`：读写那份 JSON（键跟 Rust 那边的 `FileConfig` 一一对应）
+- `danmu_hime/service.py`：`systemctl --user` 的薄壳
+- `danmu_hime/window.py`：界面；滑块/九宫格都在 `_add_slider`、`_page_position` 里
+- `danmu_hime/i18n.py`：中英文字符串表（认 `LANG=zh_*`）

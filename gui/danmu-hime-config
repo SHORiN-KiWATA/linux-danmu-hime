@@ -6,7 +6,7 @@ for path in ("/usr/lib/linux-danmu-hime", "/usr/share/danmu-hime-config"):
     if path not in sys.path:
         sys.path.insert(0, path)
 
-from danmaku_config.app import main
+from danmu_hime.app import main
 
 if __name__ == "__main__":
     sys.exit(main())

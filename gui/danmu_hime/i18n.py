@@ -116,7 +116,7 @@ _ZH = {
     "Overlay restarted": "浮层已重启",
     "Could not write the config: {err}": "写配置文件失败：{err}",
     "Logs": "看日志",
-    "Command": "journalctl --user -u danmaku-overlay -f",
+    "Command": "journalctl --user -u danmu-hime -f",
     "seconds": "秒",
     "pixels": "像素",
     "px": "px",

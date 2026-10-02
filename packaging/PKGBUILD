@@ -39,13 +39,13 @@ package() {
   install -Dm0755 gui/danmu-hime-config "$pkgdir/usr/bin/danmu-hime-config"
   install -d "$pkgdir/usr/lib/$pkgname"
   # 别把源码树里的 __pycache__ 也装进去
-  find gui/danmaku_config -name __pycache__ -type d -prune -exec rm -rf {} +
-  cp -r gui/danmaku_config "$pkgdir/usr/lib/$pkgname/"
+  find gui/danmu_hime -name __pycache__ -type d -prune -exec rm -rf {} +
+  cp -r gui/danmu_hime "$pkgdir/usr/lib/$pkgname/"
   install -Dm0644 gui/io.github.shorin_kiwata.DanmuHime.desktop \
     "$pkgdir/usr/share/applications/io.github.shorin_kiwata.DanmuHime.desktop"
-  install -Dm0644 gui/icons/io.github.shorin_kiwata.DanmakuOverlay.svg \
-    "$pkgdir/usr/share/icons/hicolor/scalable/apps/io.github.shorin_kiwata.DanmakuOverlay.svg"
-  install -Dm0644 gui/icons/io.github.shorin_kiwata.DanmakuOverlayConfig.png \
-    "$pkgdir/usr/share/icons/hicolor/128x128/apps/io.github.shorin_kiwata.DanmakuOverlayConfig.png"
+  install -Dm0644 gui/icons/io.github.shorin_kiwata.DanmuHime.svg \
+    "$pkgdir/usr/share/icons/hicolor/scalable/apps/io.github.shorin_kiwata.DanmuHime.svg"
+  install -Dm0644 gui/icons/io.github.shorin_kiwata.DanmuHime.png \
+    "$pkgdir/usr/share/icons/hicolor/128x128/apps/io.github.shorin_kiwata.DanmuHime.png"
   install -Dm0644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

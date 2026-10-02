@@ -1,12 +1,12 @@
 [Desktop Entry]
 Type=Application
-Name=Danmaku Overlay Settings
-Name[zh_CN]=弹幕浮层设置
+Name=Danmu Hime
+Name[zh_CN]=弹幕姬
 Comment=Configure the bilibili live danmaku overlay
 Comment[zh_CN]=设置 B 站直播弹幕浮层（字号、位置、停留时间、开机自启）
 Exec=danmu-hime-config
-Icon=io.github.shorin_kiwata.DanmakuOverlayConfig
+Icon=io.github.shorin_kiwata.DanmuHime
 Terminal=false
 Categories=AudioVideo;Settings;
-Keywords=danmaku;bilibili;overlay;弹幕;浮层;
+Keywords=danmu-hime;danmu;hime;danmaku;弹幕姬;弹幕;bilibili;overlay;
 StartupNotify=true

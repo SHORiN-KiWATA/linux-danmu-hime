@@ -144,7 +144,7 @@ impl Args {
 }
 
 fn usage() -> &'static str {
-    "用法: danmaku-overlay <房间号|直播间链接> [选项]
+    "用法: danmu-hime <房间号|直播间链接> [选项]
 
 选项:
   --width <像素>        浮层宽（默认 420，暗色底板铺满这个宽度）
@@ -164,13 +164,13 @@ fn usage() -> &'static str {
   --output <名字>       挂到哪块显示器上，默认让合成器挑
   --cookie \"...\"       登录 cookie（默认读 bilibili_live_stream 脚本的缓存）
 
-  --config <路径>       配置文件（默认 ~/.config/bilibili-danmaku/config.json，
+  --config <路径>       配置文件（默认 ~/.config/danmu-hime/config.json，
                         文件里的项都可以被命令行覆盖；改了这个文件浮层会热重载）
   --no-config           不读配置文件
   --print-config        把当前生效的配置以 JSON 打到 stdout 就退出"
 }
 
-/// 配置文件（`~/.config/bilibili-danmaku/config.json`）的内容。
+/// 配置文件（`~/.config/danmu-hime/config.json`）的内容。
 /// 每一项都可选：没写的用默认值，所以 GUI 只写自己关心的几项也没问题。
 /// 数字项：420、420.0、"420" 都收——GUI 或者手写都可能给成浮点。
 fn config_number<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
@@ -264,12 +264,12 @@ struct FileConfig {
     offset_y: Option<i32>,
 }
 
-/// 默认配置文件路径：`$XDG_CONFIG_HOME/bilibili-danmaku/config.json`。
+/// 默认配置文件路径：`$XDG_CONFIG_HOME/danmu-hime/config.json`。
 fn default_config_path() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
-    Some(base.join("bilibili-danmaku").join("config.json"))
+    Some(base.join("danmu-hime").join("config.json"))
 }
 
 impl FileConfig {
@@ -864,7 +864,7 @@ impl Overlay {
             qh,
             self.surface.clone(),
             self.layer_kind,
-            Some("danmaku-overlay"),
+            Some("danmu-hime"),
             output.as_ref(),
         );
         layer.set_anchor(self.anchor);
@@ -1802,7 +1802,7 @@ mod tests {
 
     #[test]
     fn json_config_fills_args() {
-        let path = std::env::temp_dir().join(format!("danmaku-config-{}.json", std::process::id()));
+        let path = std::env::temp_dir().join(format!("danmu-hime-config-{}.json", std::process::id()));
         std::fs::write(
             &path,
             r#"{"room":"14709735","font_size":26.5,"line_gap":1.0,"opacity":0.3,
@@ -1887,7 +1887,7 @@ mod tests {
 
     #[test]
     fn integer_fields_take_ints_floats_and_strings() {
-        let dir = std::env::temp_dir().join("bilibili-danmaku-i32");
+        let dir = std::env::temp_dir().join("danmu-hime-i32");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("ok.json");
         std::fs::write(
@@ -1904,7 +1904,7 @@ mod tests {
 
     #[test]
     fn broken_config_reports_an_error_instead_of_panicking() {
-        let dir = std::env::temp_dir().join("bilibili-danmaku-broken");
+        let dir = std::env::temp_dir().join("danmu-hime-broken");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("broken.json");
         std::fs::write(&path, r#"{"room": "14709735", "width": }"#).unwrap();
@@ -1913,7 +1913,7 @@ mod tests {
 
     #[test]
     fn missing_config_is_not_an_error() {
-        let config = FileConfig::load_if_exists(Path::new("/nonexistent/danmaku-config.json"))
+        let config = FileConfig::load_if_exists(Path::new("/nonexistent/danmu-hime-config.json"))
             .expect("文件不存在不算错");
         assert!(config.room.is_none() && config.font_size.is_none());
     }

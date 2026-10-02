@@ -1,4 +1,4 @@
-"""读写 ~/.config/bilibili-danmaku/config.json。
+"""读写 ~/.config/danmu-hime/config.json。
 
 浮层启动时读这个文件，之后每次它被改动都会热重载（显示类设置一秒内生效），
 所以 GUI 只要「改哪项就写回文件」就够了，不需要 IPC。
@@ -11,7 +11,7 @@ import os
 import tempfile
 from pathlib import Path
 
-APP_DIR = "bilibili-danmaku"
+APP_DIR = "danmu-hime"
 CONFIG_NAME = "config.json"
 
 # 跟 Rust 那边的 FileConfig 一一对应；没写的键浮层会用自己的默认值

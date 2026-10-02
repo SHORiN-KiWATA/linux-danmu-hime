@@ -10,7 +10,7 @@ from gi.repository import Adw, Gio  # noqa: E402
 
 from .window import ConfigWindow
 
-APP_ID = "io.github.shorin_kiwata.DanmakuOverlayConfig"
+APP_ID = "io.github.shorin_kiwata.DanmuHime"
 
 
 class App(Adw.Application):

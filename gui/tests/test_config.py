@@ -20,7 +20,7 @@ class ConfigTest(unittest.TestCase):
         # 换过环境变量之后要重新拿路径
         import importlib
 
-        from danmaku_config import config
+        from danmu_hime import config
 
         self.config = importlib.reload(config)
 
@@ -34,7 +34,7 @@ class ConfigTest(unittest.TestCase):
     def test_path_follows_xdg(self) -> None:
         self.assertEqual(
             self.config.config_path(),
-            Path(self.home.name) / "bilibili-danmaku" / "config.json",
+            Path(self.home.name) / "danmu-hime" / "config.json",
         )
 
     def test_missing_file_gives_defaults(self) -> None:
@@ -83,7 +83,7 @@ class LoginTest(unittest.TestCase):
                                         {"name": "DedeUserID", "value": "9202840"}]}),
                 encoding="utf-8",
             )
-            from danmaku_config import config as module
+            from danmu_hime import config as module
 
             cookie = module.import_from_hime(path)
             self.assertEqual(cookie, "SESSDATA=x%2Cy; DedeUserID=9202840")
@@ -92,12 +92,12 @@ class LoginTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "app-config.json"
             path.write_text(json.dumps({"cookies": [{"name": "buvid3", "value": "1"}]}))
-            from danmaku_config import config as module
+            from danmu_hime import config as module
 
             self.assertIsNone(module.import_from_hime(path))
 
     def test_login_state(self) -> None:
-        from danmaku_config import config as module
+        from danmu_hime import config as module
 
         self.assertEqual(module.login_state({"cookie": None}), ("anonymous", 0))
         self.assertEqual(
@@ -108,20 +108,20 @@ class LoginTest(unittest.TestCase):
 
 class I18nTest(unittest.TestCase):
     def test_every_key_has_a_translation(self) -> None:
-        from danmaku_config import i18n
+        from danmu_hime import i18n
 
         missing = [key for key, value in i18n._ZH.items() if not value]
         self.assertEqual(missing, [])
 
     def test_unknown_string_passes_through(self) -> None:
-        from danmaku_config import i18n
+        from danmu_hime import i18n
 
         self.assertEqual(i18n._("没有这个词的字符串"), "没有这个词的字符串")
 
 
 class ServiceTest(unittest.TestCase):
     def test_module_does_not_shell_out_at_import(self) -> None:
-        from danmaku_config import service
+        from danmu_hime import service
 
         self.assertTrue(service.UNIT.endswith(".service"))
         self.assertIn("journalctl", service.LOG_COMMAND)

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Danmu Hime (Overlay)
+Name[zh_CN]=弹幕姬（浮层）
+Comment=bilibili live danmaku on the desktop
+Comment[zh_CN]=把 B 站直播弹幕挂在桌面上（由「弹幕姬」设置界面调参数）
+Exec=danmu-hime
+Icon=io.github.shorin_kiwata.DanmuHime
+Terminal=false
+NoDisplay=true
+Categories=AudioVideo;
+Keywords=danmu-hime;danmaku;弹幕姬;弹幕;bilibili;overlay;

@@ -53,23 +53,23 @@ mkdir -p "$BINDIR" "$APPDIR" "$APPS" "$ICONS" "$UNITDIR"
 # 符号链接而不是拷贝：以后重新 cargo build 就是新的
 ln -sf "$overlay" "$BINDIR/danmu-hime"
 
-rm -rf "$APPDIR/danmaku_config"
-cp -r "$HERE/danmaku_config" "$APPDIR/"
+rm -rf "$APPDIR/danmu_hime"
+cp -r "$HERE/danmu_hime" "$APPDIR/"
 cat >"$BINDIR/danmu-hime-config" <<LAUNCH
 #!/usr/bin/env python3
 import sys
 
 sys.path.insert(0, "$APPDIR")
 
-from danmaku_config.app import main
+from danmu_hime.app import main
 
 if __name__ == "__main__":
     sys.exit(main())
 LAUNCH
 chmod 0755 "$BINDIR/danmu-hime-config"
-install -m 0644 "$HERE/io.github.shorin_kiwata.DanmakuOverlayConfig.desktop" "$APPS/"
-install -m 0644 "$HERE/io.github.shorin_kiwata.DanmakuOverlay.desktop" "$APPS/"
-install -m 0644 "$HERE/icons/io.github.shorin_kiwata.DanmakuOverlayConfig.png" "$ICONS/"
+install -m 0644 "$HERE/io.github.shorin_kiwata.DanmuHime.desktop" "$APPS/"
+install -m 0644 "$HERE/io.github.shorin_kiwata.DanmuHime.desktop" "$APPS/"
+install -m 0644 "$HERE/icons/io.github.shorin_kiwata.DanmuHime.png" "$ICONS/"
 
 cat >"$UNITDIR/danmu-hime.service" <<UNIT
 [Unit]
@@ -97,7 +97,7 @@ cat <<EOF
 装好了：
   设置界面    $BINDIR/danmu-hime-config      （应用菜单里叫「弹幕浮层设置」）
   浮层        $BINDIR/danmu-hime     → $overlay
-  配置        \${XDG_CONFIG_HOME:-$HOME/.config}/bilibili-danmaku/config.json
+  配置        \${XDG_CONFIG_HOME:-$HOME/.config}/danmu-hime/config.json
   服务单元    $UNITDIR/danmu-hime.service
 
 开机自启：设置界面第一页的「开机自启」开关，或者

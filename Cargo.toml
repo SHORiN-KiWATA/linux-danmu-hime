@@ -1,5 +1,5 @@
 [package]
-name = "bilibili-danmaku"
+name = "danmu-hime"
 version = "0.1.0"
 edition = "2024"
 description = "抓 B 站直播间弹幕：核心库 + 命令行 dump + Wayland layer-shell 浮层"

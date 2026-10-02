@@ -29,7 +29,7 @@ danmu-hime 721              # 浮层：房间号（或直播间链接）
 danmu-hime-config           # 设置界面（应用菜单里叫「弹幕浮层设置」）
 ```
 
-界面里的改动写进 `~/.config/bilibili-danmaku/config.json` 后**立即生效**（浮层每帧看
+界面里的改动写进 `~/.config/danmu-hime/config.json` 后**立即生效**（浮层每帧看
 一眼 mtime），只有房间号 / cookie / 字体 / 显示器要重启浮层，改完会自己重启。
 
 - 昵称打码（`安***`）是服务端行为，**扫码登录**之后就正常了

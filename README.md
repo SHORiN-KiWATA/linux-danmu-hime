@@ -4,7 +4,10 @@
 无 GPU 依赖），点击穿透；配套一个 GTK4 设置界面。
 
 <p align="center">
-  <img src="docs/logo.png" width="140" alt="logo">
+  <img src="docs/logo.png" width="150" alt="logo">
+</p>
+
+<p align="center">
   <img src="docs/demo.png" width="420" alt="演示：浮层里的弹幕（含 test 弹幕、换行、emoji）">
 </p>
 

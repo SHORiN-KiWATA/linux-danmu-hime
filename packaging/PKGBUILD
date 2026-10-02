@@ -47,5 +47,10 @@ package() {
     "$pkgdir/usr/share/icons/hicolor/scalable/apps/io.github.shorin_kiwata.DanmuHime.svg"
   install -Dm0644 gui/icons/io.github.shorin_kiwata.DanmuHime.png \
     "$pkgdir/usr/share/icons/hicolor/128x128/apps/io.github.shorin_kiwata.DanmuHime.png"
+  install -Dm0644 gui/io.github.shorin_kiwata.DanmuHimeOverlay.desktop \
+    "$pkgdir/usr/share/applications/io.github.shorin_kiwata.DanmuHimeOverlay.desktop"
+  # 浮层的 systemd 用户单元：GUI 的启动/停止按钮要用它
+  install -Dm0644 packaging/danmu-hime.service \
+    "$pkgdir/usr/lib/systemd/user/danmu-hime.service"
   install -Dm0644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

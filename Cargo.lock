@@ -70,30 +70,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 
 [[package]]
-name = "danmu-hime"
-version = "0.1.0"
-dependencies = [
- "ab_glyph",
- "anyhow",
- "chrono",
- "flate2",
- "futures-util",
- "md5",
- "memmap2",
- "reqwest",
- "rustls",
- "serde",
- "serde_json",
- "smithay-client-toolkit",
- "tiny-skia",
- "tokio",
- "tokio-tungstenite",
- "urlencoding",
- "wayland-client",
- "wayland-protocols",
-]
-
-[[package]]
 name = "bitflags"
 version = "2.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -269,6 +245,30 @@ name = "cursor-icon"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
+
+[[package]]
+name = "danmu-hime"
+version = "0.1.0"
+dependencies = [
+ "ab_glyph",
+ "anyhow",
+ "chrono",
+ "flate2",
+ "futures-util",
+ "md5",
+ "memmap2",
+ "reqwest",
+ "rustls",
+ "serde",
+ "serde_json",
+ "smithay-client-toolkit",
+ "tiny-skia",
+ "tokio",
+ "tokio-tungstenite",
+ "urlencoding",
+ "wayland-client",
+ "wayland-protocols",
+]
 
 [[package]]
 name = "data-encoding"

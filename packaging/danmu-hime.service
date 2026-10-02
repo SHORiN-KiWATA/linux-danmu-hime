@@ -1,0 +1,14 @@
+[Unit]
+Description=bilibili 直播弹幕浮层（danmu-hime）
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/danmu-hime
+Restart=on-failure
+RestartSec=3
+Slice=session.slice
+
+[Install]
+WantedBy=default.target

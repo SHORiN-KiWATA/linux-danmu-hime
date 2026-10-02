@@ -28,7 +28,7 @@ DEFAULTS: dict[str, object] = {
     "font_size": 30.0,
     "line_gap": 4.0,
     "opacity": 0.6,
-    "ttl": 20.0,
+    "ttl": 14.0,
     "fade": 1.0,
     "max_lines": 101,
     "font": None,

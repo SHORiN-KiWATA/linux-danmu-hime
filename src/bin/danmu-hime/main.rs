@@ -147,17 +147,17 @@ fn usage() -> &'static str {
     "用法: danmu-hime <房间号|直播间链接> [选项]
 
 选项:
-  --width <像素>        浮层宽（默认 420，暗色底板铺满这个宽度）
+  --width <像素>        浮层宽（默认 381，暗色底板铺满这个宽度）
   --height <像素>       高度上限（默认 560），装不下的老弹幕就不画了
-  --margin <像素>       距屏幕边缘（默认 16）
+  --margin <像素>       距屏幕边缘（默认 20）
   --anchor <位置>       bottom-right|bottom-left|top-right|…（默认 bottom-right）
-  --font-size <像素>    字号（默认 20，是 em 尺寸：汉字实际约占九成）
+  --font-size <像素>    字号（默认 30，是 em 尺寸：汉字实际约占九成）
   --zoom <倍数>         字和行距一起放大（默认 1.0；跟 --scale 的设备像素比无关）
   --line-gap <像素>     两行之间的空隙（默认 4；底板上仍然是连着的）
-  --opacity <0-1>       暗色底板的不透明度（默认 0.55，0 = 只有字没底）
-  --ttl <秒>            一条弹幕待多久后开始淡出（默认 12）
-  --fade <秒>           淡出用多久（默认 0.6）
-  --max-lines <条数>    最多记多少条（默认 200）
+  --opacity <0-1>       暗色底板的不透明度（默认 0.6，0 = 只有字没底）
+  --ttl <秒>            一条弹幕待多久后开始淡出（默认 14）
+  --fade <秒>           淡出用多久（默认 1.0）
+  --max-lines <条数>    最多记多少条（默认 101）
   --font <路径>         字体文件，默认用 fontconfig 找中文字体
   --emoji-font <路径>   彩色 emoji 字体（默认 fc-match emoji，找不到就跳过 emoji）
   --scale <倍数>        设备像素比，默认跟随合成器（HiDPI/分数缩放）
@@ -172,7 +172,7 @@ fn usage() -> &'static str {
 
 /// 配置文件（`~/.config/danmu-hime/config.json`）的内容。
 /// 每一项都可选：没写的用默认值，所以 GUI 只写自己关心的几项也没问题。
-/// 数字项：420、420.0、"420" 都收——GUI 或者手写都可能给成浮点。
+/// 数字项：381、381.0、"381" 都收——GUI 或者手写都可能给成浮点。
 fn config_number<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -374,7 +374,7 @@ impl Default for Args {
             anchor: Anchor::BOTTOM | Anchor::RIGHT,
             theme: Theme::default(),
             max_lines: 101,
-            ttl: 20.0,
+            ttl: 14.0,
             fade: 1.0,
             font: None,
             scale: None,

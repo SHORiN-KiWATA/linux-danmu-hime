@@ -1,6 +1,6 @@
 # Maintainer: SHORiN-KiWATA <shorin@example.com>
 pkgname=linux-danmu-hime
-pkgver=0.1.0
+pkgver=r8.a486bc6
 pkgrel=1
 pkgdesc="bilibili 直播弹幕浮层（wlr-layer-shell）+ GTK4 设置界面"
 arch=('x86_64' 'aarch64')
@@ -19,6 +19,9 @@ pkgver() {
 
 build() {
   cd "$pkgname"
+  # ring 的汇编符号用 rust-lld 链接会找不到（ring_core_*__p256_mul_mont），
+  # 让 Rust 走系统 cc → GNU ld 就没这问题。
+  export RUSTFLAGS="${RUSTFLAGS:-} -C linker=cc"
   cargo build --release --locked --bin damu-hime
 }
 

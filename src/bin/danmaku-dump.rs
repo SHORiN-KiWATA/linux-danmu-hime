@@ -7,7 +7,7 @@
 //! 状态信息（连接、断开、错误）走 stderr，消息走 stdout，方便 `| jq` 或重放。
 
 use anyhow::{Context, Result, bail};
-use bilibili_danmaku::{
+use danmu_hime::{
     ClientEvent, Cookies, DanmakuClient, DanmakuEvent, load_cached_cookies, parse_room_arg,
 };
 use chrono::Local;
@@ -63,7 +63,7 @@ fn parse_args() -> Result<Args> {
 }
 
 fn main() -> Result<()> {
-    bilibili_danmaku::runtime()
+    danmu_hime::runtime()
         .context("创建 tokio runtime 失败")?
         .block_on(run())
 }

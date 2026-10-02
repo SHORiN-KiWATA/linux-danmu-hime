@@ -11,7 +11,7 @@ mod png;
 mod render;
 
 use anyhow::{Context, Result, bail};
-use bilibili_danmaku::{
+use danmu_hime::{
     ClientEvent, Cookies, DanmakuClient, DanmakuEvent, load_cached_cookies, parse_room_arg,
 };
 use render::{DrawLine, Kind, Renderer, Theme};
@@ -1283,7 +1283,7 @@ impl Overlay {
 
 fn spawn_danmaku(room_id: i64, cookies: Cookies, tx: Sender<UiEvent>) {
     std::thread::spawn(move || {
-        let Ok(runtime) = bilibili_danmaku::runtime() else {
+        let Ok(runtime) = danmu_hime::runtime() else {
             let _ = tx.send(UiEvent::Notice("创建 tokio runtime 失败".into()));
             return;
         };
@@ -1448,7 +1448,7 @@ fn to_line(event: DanmakuEvent) -> Option<(String, String)> {
 }
 
 /// 一条弹幕长什么样：`[牌子·等级] (舰长) 昵称: 内容`。
-fn danmaku_line(danmaku: &bilibili_danmaku::protocol::Danmaku) -> Option<(String, String)> {
+fn danmaku_line(danmaku: &danmu_hime::protocol::Danmaku) -> Option<(String, String)> {
     let mut prefix = String::new();
     if SHOW_MEDAL.load(Ordering::Relaxed)
         && let Some(medal) = &danmaku.medal

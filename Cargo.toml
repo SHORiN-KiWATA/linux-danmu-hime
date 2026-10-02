@@ -5,7 +5,7 @@ edition = "2024"
 description = "抓 B 站直播间弹幕：核心库 + 命令行 dump + Wayland layer-shell 浮层"
 
 [lib]
-name = "bilibili_danmaku"
+name = "danmu_hime"
 path = "src/lib.rs"
 
 [[bin]]

@@ -508,10 +508,17 @@ fn draw_text(
         // 挂了 B 站原图的字符（含哈希出来的私用区占位符）一律先画原图：
         // 主字体里有没有这个字都无所谓，宽度统一按一个 em 算，免得字体给 0 宽度。
         if self.emote_sources.borrow().contains_key(&ch) {
-            // 这个字符画的是 B 站原图，宽度就按一个汉字（1em）算：
-            // 私用区字符的 .notdef 宽度由字体决定（实测能到 2.3em），
-            // 拿它当宽度会把表情拉得又宽又扁。
-            advance = size;
+            // 这个字符画的是 B 站原图。B 站是按高度画的：高度给 1.2 个字，
+            // 宽度按原图比例自然出来（「妙啊」那种 138×60 的长条就是又大又宽）。
+            // 私用区字符的 .notdef 宽度实测能到 2.3em，不能拿来当尺寸。
+            let aspect = self
+                .emote_sources
+                .borrow()
+                .get(&ch)
+                .map(|source| source.width as f32 / source.height.max(1) as f32)
+                .unwrap_or(1.0);
+            let drawn = size * 1.2 * aspect;
+            advance = drawn.max(size); // 至少占一个汉字宽，光标跟着让开
             self.draw_emoji(pixmap, ch, *x, baseline, advance, alpha);
             *x += advance;
             prev = Some(id);
@@ -600,8 +607,8 @@ impl Renderer {
             return hit.clone();
         }
         let source = self.emote_sources.borrow().get(&ch).cloned()?;
-        // 等比缩放：按长边缩，长条形的大表情也不会被拉变形
-        let factor = max_width / source.width.max(source.height) as f32;
+        // 等比缩放：按宽度缩，高度按原图比例出来（调用方按高度算好宽度传进来）
+        let factor = max_width / source.width as f32;
         let width = ((source.width as f32 * factor).round() as u32).max(1);
         let height = ((source.height as f32 * factor).round() as u32).max(1);
         let built = Some(Rc::new(Emoji {

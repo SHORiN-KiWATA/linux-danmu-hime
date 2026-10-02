@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""弹幕浮层设置界面（damu-hime 的配套 GUI）。"""
+"""弹幕浮层设置界面（danmu-hime 的配套 GUI）。"""
 import sys
 
-for path in ("/usr/lib/linux-danmu-hime", "/usr/share/damu-hime-config"):
+for path in ("/usr/lib/linux-danmu-hime", "/usr/share/danmu-hime-config"):
     if path not in sys.path:
         sys.path.insert(0, path)
 

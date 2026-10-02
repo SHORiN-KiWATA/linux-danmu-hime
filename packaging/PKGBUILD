@@ -1,6 +1,6 @@
 # Maintainer: SHORiN-KiWATA <shorin@example.com>
 pkgname=linux-danmu-hime
-pkgver=r17.f24345a
+pkgver=r18.a064c44
 pkgrel=1
 pkgdesc="bilibili 直播弹幕浮层（wlr-layer-shell）+ GTK4 设置界面"
 arch=('x86_64' 'aarch64')
@@ -30,19 +30,19 @@ build() {
   echo "--- cc / ar ---"
   cc --version | head -1; ar --version | head -1
   env -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS -u RUSTFLAGS -u MAKEFLAGS \
-    cargo build --release --locked --bin damu-hime
+    cargo build --release --locked --bin danmu-hime
 }
 
 package() {
   cd "$pkgname"
-  install -Dm0755 target/release/damu-hime "$pkgdir/usr/bin/damu-hime"
-  install -Dm0755 gui/damu-hime-config "$pkgdir/usr/bin/damu-hime-config"
+  install -Dm0755 target/release/danmu-hime "$pkgdir/usr/bin/danmu-hime"
+  install -Dm0755 gui/danmu-hime-config "$pkgdir/usr/bin/danmu-hime-config"
   install -d "$pkgdir/usr/lib/$pkgname"
   # 别把源码树里的 __pycache__ 也装进去
   find gui/danmaku_config -name __pycache__ -type d -prune -exec rm -rf {} +
   cp -r gui/danmaku_config "$pkgdir/usr/lib/$pkgname/"
-  install -Dm0644 gui/io.github.shorin_kiwata.DamuHime.desktop \
-    "$pkgdir/usr/share/applications/io.github.shorin_kiwata.DamuHime.desktop"
+  install -Dm0644 gui/io.github.shorin_kiwata.DanmuHime.desktop \
+    "$pkgdir/usr/share/applications/io.github.shorin_kiwata.DanmuHime.desktop"
   install -Dm0644 gui/icons/io.github.shorin_kiwata.DanmakuOverlay.svg \
     "$pkgdir/usr/share/icons/hicolor/scalable/apps/io.github.shorin_kiwata.DanmakuOverlay.svg"
   install -Dm0644 gui/icons/io.github.shorin_kiwata.DanmakuOverlayConfig.png \

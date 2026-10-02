@@ -18,15 +18,15 @@
 yay -S linux-danmu-hime
 
 # 或者从源码
-cargo build --release --bin damu-hime
-cd gui && ./install.sh --overlay ../target/release/damu-hime
+cargo build --release --bin danmu-hime
+cd gui && ./install.sh --overlay ../target/release/danmu-hime
 ```
 
 ## 用
 
 ```bash
-damu-hime 721              # 浮层：房间号（或直播间链接）
-damu-hime-config           # 设置界面（应用菜单里叫「弹幕浮层设置」）
+danmu-hime 721              # 浮层：房间号（或直播间链接）
+danmu-hime-config           # 设置界面（应用菜单里叫「弹幕浮层设置」）
 ```
 
 界面里的改动写进 `~/.config/bilibili-danmaku/config.json` 后**立即生效**（浮层每帧看

@@ -1,56 +1,21 @@
-# Maintainer: SHORiN-KiWATA <shorin@example.com>
+# AUR: linux-danmu-hime（预编译版，直接拉 GitHub release，本地不需要编 Rust）
 pkgname=linux-danmu-hime
-pkgver=r30.2ecb5a0
+pkgver=0.1.0
 pkgrel=1
-pkgdesc="bilibili 直播弹幕浮层（wlr-layer-shell）+ GTK4 设置界面"
-arch=('x86_64' 'aarch64')
+pkgdesc="bilibili 直播弹幕浮层（wlr-layer-shell）+ GTK4 设置界面（预编译）"
+# 只提供 x86_64 的 release 资产；aarch64 得从源码编（见仓库 README）
+arch=('x86_64')
 url="https://github.com/SHORiN-KiWATA/linux-danmu-hime"
 license=('MIT')
 depends=('glibc' 'gcc-libs' 'fontconfig' 'wayland' 'libxkbcommon' 'gtk4' 'libadwaita' 'python-gobject' 'python-cairo' 'systemd')
 optdepends=('qrencode: 扫码登录显示二维码' 'noto-fonts-emoji: 彩色 emoji')
-makedepends=('cargo' 'git')
-# ring 的汇编和 LTO 合不来（符号会被编成 LTO 中间产物，链接时找不到），
-# 这个包单独关掉 LTO。
-options=('!lto' '!debug')
-source=("$pkgname::git+$url.git")
-sha256sums=('SKIP')
-
-pkgver() {
-  cd "$pkgname"
-  printf 'r%s.%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
-}
-
-build() {
-  cd "$pkgname"
-  # 干净全量编译是能过的，但 makepkg 会把 CFLAGS/LDFLAGS 这些导出来，
-  # ring 的汇编在这种环境下会编不出来（ring_core_*__p256_mul_mont 未定义）。
-  # 先把环境打出来（出问题时有据可查），再清掉这些变量编译。
-  echo "--- 构建环境里的编译器相关变量 ---"
-  env | grep -E '^(CFLAGS|CXXFLAGS|CPPFLAGS|LDFLAGS|RUSTFLAGS|CC|CXX|AR|MAKEFLAGS)=' || echo "（干净）"
-  echo "--- cc / ar ---"
-  cc --version | head -1; ar --version | head -1
-  env -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS -u RUSTFLAGS -u MAKEFLAGS \
-    cargo build --release --locked --bin danmu-hime
-}
+provides=('danmu-hime')
+# 预编译包：不生成 -debug，也不必再管 makepkg.conf 里的 LTO 开关
+options=('!debug')
+source=("danmu-hime-$pkgver-x86_64.tar.gz::$url/releases/download/v$pkgver/danmu-hime-$pkgver-x86_64.tar.gz")
+sha256sums=('2124e90d3f7df62b6833a2b1c978b0a7be2fdaf7573dea08f0c528abb882e789')
 
 package() {
-  cd "$pkgname"
-  install -Dm0755 target/release/danmu-hime "$pkgdir/usr/bin/danmu-hime"
-  install -Dm0755 gui/danmu-hime-config "$pkgdir/usr/bin/danmu-hime-config"
-  install -d "$pkgdir/usr/lib/$pkgname"
-  # 别把源码树里的 __pycache__ 也装进去
-  find gui/danmu_hime -name __pycache__ -type d -prune -exec rm -rf {} +
-  cp -r gui/danmu_hime "$pkgdir/usr/lib/$pkgname/"
-  install -Dm0644 gui/io.github.shorin_kiwata.DanmuHime.desktop \
-    "$pkgdir/usr/share/applications/io.github.shorin_kiwata.DanmuHime.desktop"
-  install -Dm0644 gui/icons/io.github.shorin_kiwata.DanmuHime.svg \
-    "$pkgdir/usr/share/icons/hicolor/scalable/apps/io.github.shorin_kiwata.DanmuHime.svg"
-  install -Dm0644 gui/icons/io.github.shorin_kiwata.DanmuHime.png \
-    "$pkgdir/usr/share/icons/hicolor/128x128/apps/io.github.shorin_kiwata.DanmuHime.png"
-  install -Dm0644 gui/io.github.shorin_kiwata.DanmuHimeOverlay.desktop \
-    "$pkgdir/usr/share/applications/io.github.shorin_kiwata.DanmuHimeOverlay.desktop"
-  # 浮层的 systemd 用户单元：GUI 的启动/停止按钮要用它
-  install -Dm0644 packaging/danmu-hime.service \
-    "$pkgdir/usr/lib/systemd/user/danmu-hime.service"
-  install -Dm0644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  # 资产里就是完整的文件树（usr/bin、usr/lib/linux-danmu-hime、桌面项、图标、systemd 单元、LICENSE）
+  cp -a "$srcdir/danmu-hime-$pkgver/usr" "$pkgdir/"
 }

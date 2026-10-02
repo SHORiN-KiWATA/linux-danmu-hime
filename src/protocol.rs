@@ -301,6 +301,14 @@ pub fn parse_popularity(body: &[u8]) -> Option<u64> {
 
 /// 字段位置对着 blivedm 的 DanmakuMessage.from_command 抄的（2026 年现行协议）。
 fn parse_danmaku(payload: &serde_json::Value) -> Option<DanmakuEvent> {
+    // 调试开关：DANMU_HIME_DEBUG_RAW=1 时把每一条弹幕的原始 payload 原样打出来。
+    // 用来查「直播间私有表情为什么不显示」——grep 弹幕正文就能找到那一条。
+    if std::env::var_os("DANMU_HIME_DEBUG_RAW").is_some() {
+        eprintln!(
+            "[raw-danmaku] {}",
+            serde_json::to_string(payload).unwrap_or_default()
+        );
+    }
     let info = payload.get("info")?.as_array()?;
     let text = info.get(1)?.as_str()?.to_string();
     let meta = info.first().and_then(serde_json::Value::as_array);

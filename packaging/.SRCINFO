@@ -1,6 +1,6 @@
 pkgbase = linux-danmu-hime
 	pkgdesc = bilibili 直播弹幕浮层（wlr-layer-shell）+ GTK4 设置界面
-	pkgver = r16.a1103e2
+	pkgver = r17.f24345a
 	pkgrel = 1
 	url = https://github.com/SHORiN-KiWATA/linux-danmu-hime
 	arch = x86_64
@@ -21,6 +21,7 @@ pkgbase = linux-danmu-hime
 	optdepends = qrencode: 扫码登录显示二维码
 	optdepends = noto-fonts-emoji: 彩色 emoji
 	options = !lto
+	options = !debug
 	source = linux-danmu-hime::git+https://github.com/SHORiN-KiWATA/linux-danmu-hime.git
 	sha256sums = SKIP
 

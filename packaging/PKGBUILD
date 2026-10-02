@@ -1,6 +1,6 @@
 # Maintainer: SHORiN-KiWATA <shorin@example.com>
 pkgname=linux-danmu-hime
-pkgver=r16.a1103e2
+pkgver=r17.f24345a
 pkgrel=1
 pkgdesc="bilibili 直播弹幕浮层（wlr-layer-shell）+ GTK4 设置界面"
 arch=('x86_64' 'aarch64')
@@ -11,7 +11,7 @@ optdepends=('qrencode: 扫码登录显示二维码' 'noto-fonts-emoji: 彩色 em
 makedepends=('cargo' 'git')
 # ring 的汇编和 LTO 合不来（符号会被编成 LTO 中间产物，链接时找不到），
 # 这个包单独关掉 LTO。
-options=('!lto')
+options=('!lto' '!debug')
 source=("$pkgname::git+$url.git")
 sha256sums=('SKIP')
 

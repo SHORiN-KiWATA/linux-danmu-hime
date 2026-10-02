@@ -108,108 +108,251 @@ class WidgetRow(Adw.PreferencesRow):
 
 
 class PanelPreview(Gtk.DrawingArea):
-    """1:1 画一块浮层底部出来：字号、行距、底板透明度、换行都是真的。"""
+    """照着浮层的排法画一遍：宽度、字号、行距、透明度、换行都是真的。"""
 
     def __init__(self, window: "ConfigWindow") -> None:
         super().__init__()
         self.window = window
-        self.set_size_request(-1, 300)
+        self.set_size_request(-1, 320)
         self.set_draw_func(self._draw)
 
     def _draw(self, _area, cr, width: int, height: int) -> None:
         values = self.window.values
-        font_size = max(6.0, float(values["font_size"]))
-        gap = float(values["line_gap"])
+        zoom = float(values.get("zoom") or 1.0)
+        font_size = max(6.0, float(values["font_size"]) * zoom)
+        gap = float(values["line_gap"]) * zoom
         opacity = max(0.0, min(1.0, float(values["opacity"])))
-        pad = 6.0
+        panel_rgb = _rgb(values.get("panel_color") or config.DEFAULTS["panel_color"])
+        name_rgb = _rgb(values.get("name_color") or config.DEFAULTS["name_color"])
+        text_rgb = _rgb(values.get("text_color") or config.DEFAULTS["text_color"])
 
         cr.set_source_rgb(0.10, 0.11, 0.13)
         cr.paint()
 
-        panel_width = min(float(width), float(values["width"]))
-        desc = _pango_font(values.get("font"), font_size)
-        # 先量一遍：一条弹幕软换行成几行，就往排几行
+        # 浮层多大就画多大；放不下就整体等比缩（字号一起缩）
+        panel_width = max(80.0, float(values["width"]))
+        panel_limit = max(60.0, float(values["height"]))
+        del panel_limit  # 只按宽度收一收，高度不缩：预览要 1:1 才看得出字号行距
+        scale = min(1.0, (width - 12) / panel_width)
+        size = font_size * scale
+        gap_px = gap * scale
+        pad_x, pad_y = size * 0.7, size * 0.3
+        inner = max(size, panel_width * scale - pad_x * 2)
+        desc = _pango_font(values.get("font"), size)
+
+        # 排一遍：最新的贴底，往上一行一行码（跟浮层一样）
         rows = []
-        cursor = pad
-        for name, text in SAMPLES:
-            prefix = self.create_pango_layout(f"{name}:")
+        used = pad_y * 2
+        for name, text in reversed(SAMPLES):
+            prefix = self.create_pango_layout(f"{name}: ")
             prefix.set_font_description(desc)
             prefix_width = prefix.get_pixel_size()[0]
             body = self.create_pango_layout(text)
             body.set_font_description(desc)
-            body.set_width(int(panel_width - pad * 2 - prefix_width) * Pango.SCALE)
-            body.set_wrap(Pango.WrapMode.CHAR)
-            body.set_spacing(int(gap * Pango.SCALE))
-            row_height = max(prefix.get_pixel_size()[1], body.get_pixel_size()[1])
-            rows.append((cursor, prefix, prefix_width, body))
-            cursor += row_height + gap
-        panel_height = cursor - gap + pad
-        left = width - panel_width if "right" in values["anchor"] else 0.0
-        top = height - panel_height
+            body.set_wrap(Pango.WrapMode.WORD_CHAR)  # 英文整词不拆，汉字随便断
+            body.set_width(int(max(size, inner - prefix_width)) * Pango.SCALE)
+            body.set_spacing(int(gap_px * Pango.SCALE))
+            body_height = body.get_pixel_size()[1]
+            rows.append((prefix, prefix_width, body, body_height))
+            used += body_height + gap_px
+        used -= gap_px
+        panel_height = max(size, used)
 
-        # 底板
-        panel = _rgb(values.get("panel_color") or config.DEFAULTS["panel_color"])
-        cr.set_source_rgba(panel[0], panel[1], panel[2], 0.55 * opacity)
-        cr.rectangle(left, top, panel_width, panel_height)
-        cr.fill()
+        left = max(6.0, width - panel_width * scale - 6)
+        top = max(0.0, height - panel_height - 6)
 
-        # 字：昵称淡蓝、内容近白（跟 render.rs 一致）
-        name = _rgb(values.get("name_color") or config.DEFAULTS["name_color"])
-        text_rgb = _rgb(values.get("text_color") or config.DEFAULTS["text_color"])
-        for row_top, prefix, prefix_width, body in rows:
-            line_top = top + row_top
-            cr.set_source_rgba(name[0], name[1], name[2], 1.0)
-            cr.move_to(left + pad, line_top)
+        # 底板 + 内容都裁在底板里
+        cr.save()
+        cr.rectangle(left, top, panel_width * scale, panel_height)
+        cr.clip()
+        cr.set_source_rgba(panel_rgb[0], panel_rgb[1], panel_rgb[2], 0.55 * opacity)
+        cr.paint()
+        cr.restore()
+
+        cr.save()
+        cr.rectangle(left, top, panel_width * scale, panel_height)
+        cr.clip()
+        y = top + pad_y
+        for prefix, prefix_width, body, body_height in rows:
+            cr.set_source_rgba(name_rgb[0], name_rgb[1], name_rgb[2], 1.0)
+            cr.move_to(left + pad_x, y)
             PangoCairo.show_layout(cr, prefix)
             cr.set_source_rgba(text_rgb[0], text_rgb[1], text_rgb[2], 1.0)
-            cr.move_to(left + pad + prefix_width, line_top)
+            cr.move_to(left + pad_x + prefix_width, y)
             PangoCairo.show_layout(cr, body)
+            y += body_height + gap_px
+        cr.restore()
 
 
 class ScreenSketch(Gtk.DrawingArea):
-    """一小块屏幕示意：浮层挂在哪、离边多远、占多大，一眼能看出来。"""
+    """按真实显示器比例画一块屏，浮层那块可以直接拖。"""
+
+    PAD = 12.0
 
     def __init__(self, window: "ConfigWindow") -> None:
         super().__init__()
         self.window = window
-        self.set_size_request(300, 160)
+        self.set_size_request(-1, 320)
         self.set_draw_func(self._draw)
+        self._drag = (0.0, 0.0)
+        self._redraw_id = 0
+        try:
+            self._cursor_grab = Gdk.Cursor.new_from_name("grabbing", None)
+            self.set_cursor(Gdk.Cursor.new_from_name("grab", None))
+        except Exception:  # pragma: no cover - 没有主题就拉倒
+            self._cursor_grab = None
+        drag = Gtk.GestureDrag()
+        drag.connect("drag-begin", self._on_drag_begin)
+        drag.connect("drag-update", self._on_drag_update)
+        drag.connect("drag-end", self._on_drag_end)
+        self.add_controller(drag)
+
+    # 显示器在示意图里占的位置，以及「屏幕像素 → 示意图像素」的缩放
+    def _screen(self, width: int, height: int) -> tuple[float, float, float, float, float]:
+        screen_w, screen_h = max(1.0, self.window.screen_size[0]), max(1.0, self.window.screen_size[1])
+        pad = self.PAD
+        scale = min((width - pad * 2) / screen_w, (height - pad * 2) / screen_h)
+        box_w, box_h = screen_w * scale, screen_h * scale
+        return (width - box_w) / 2, (height - box_h) / 2, box_w, box_h, scale
+
+    # 浮层窗口（W×H）：合成器只认贴边的那几个 margin，所以这里也按贴边算
+    def _surface(
+        self, width: int, height: int, drag: tuple[float, float] = (0.0, 0.0)
+    ) -> tuple[float, float, float, float, float]:
+        values = self.window.values
+        sx, sy, sw, sh, scale = self._screen(width, height)
+        surface_w = min(sw, max(8.0, float(values["width"]) * scale))
+        surface_h = min(sh, max(8.0, float(values["height"]) * scale))
+        margin = min(float(values["margin"]) * scale, min(sw, sh) / 2 - 3)
+        offset_x = float(values.get("offset_x") or 0) * scale
+        offset_y = float(values.get("offset_y") or 0) * scale
+        anchor = values["anchor"]
+        # 正数 = 离贴着的那条边更远：贴右边时正数往左，贴底时正数往上
+        x = sx + margin + offset_x if "left" in anchor else (
+            sx + sw - margin - offset_x - surface_w if "right" in anchor else sx + (sw - surface_w) / 2
+        )
+        y = sy + margin + offset_y if "top" in anchor else (
+            sy + sh - margin - offset_y - surface_h if "bottom" in anchor else sy + (sh - surface_h) / 2
+        )
+        x += drag[0]
+        y += drag[1]
+        x = min(max(x, sx), max(sx, sx + sw - surface_w))
+        y = min(max(y, sy), max(sy, sy + sh - surface_h))
+        return x, y, surface_w, surface_h, scale
+
+    # 底板：占满窗口宽度，贴在窗口底边（新弹幕就是从下沿挤进来的）
+    def _box(
+        self, width: int, height: int, drag: tuple[float, float] = (0.0, 0.0)
+    ) -> tuple[float, float, float, float, float]:
+        values = self.window.values
+        x, y, surface_w, surface_h, scale = self._surface(width, height, drag)
+        zoom = float(values.get("zoom") or 1.0)
+        line_h = float(values["font_size"]) * 1.15 * zoom * scale
+        panel_h = min(surface_h, max(10.0, line_h * 3.0))
+        return x, y + surface_h - panel_h, surface_w, panel_h, scale
 
     def _draw(self, _area, cr, width: int, height: int) -> None:
-        values = self.window.values
-        pad = 6.0
-        cr.set_source_rgb(0.16, 0.17, 0.20)
+        if width < 40 or height < 40:
+            return
+        cr.set_source_rgb(0.13, 0.14, 0.17)
         cr.paint()
-        cr.set_source_rgb(0.10, 0.11, 0.13)
-        cr.rectangle(pad, pad, width - pad * 2, height - pad * 2)
-        cr.fill()
+        sx, sy, sw, sh, scale = self._screen(width, height)
 
-        inner_w = width - pad * 2
-        inner_h = height - pad * 2
-        scale = min(
-            1.0,
-            inner_w / max(1.0, float(values["width"])),
-            inner_h / max(1.0, float(values["height"])),
-        )
-        box_w = max(6.0, float(values["width"]) * scale)
-        box_h = max(6.0, float(values["height"]) * scale)
-        margin = min(float(values["margin"]) * scale, min(inner_w, inner_h) / 2 - 3)
-        anchor = values["anchor"]
-        x = pad + margin if "left" in anchor else (
-            width - pad - margin - box_w if "right" in anchor else (width - box_w) / 2
-        )
-        y = pad + margin if "top" in anchor else (
-            height - pad - margin - box_h if "bottom" in anchor else (height - box_h) / 2
-        )
-        x += float(values.get("offset_x") or 0) * scale
-        y += float(values.get("offset_y") or 0) * scale
-        cr.set_source_rgba(0.35, 0.62, 1.0, 0.45)
-        cr.rectangle(x, y, box_w, box_h)
+        # 显示器
+        cr.set_source_rgb(0.09, 0.10, 0.12)
+        cr.rectangle(sx, sy, sw, sh)
         cr.fill()
-        cr.set_source_rgba(0.55, 0.75, 1.0, 0.85)
+        cr.set_source_rgba(0.45, 0.48, 0.55, 0.7)
         cr.set_line_width(1.0)
-        cr.rectangle(x + 0.5, y + 0.5, max(1.0, box_w - 1), max(1.0, box_h - 1))
+        cr.rectangle(sx + 0.5, sy + 0.5, sw - 1, sh - 1)
         cr.stroke()
+
+        # 浮层窗口：虚框（它比底板高得多，底板贴在它底边）
+        fx, fy, fw, fh, _ = self._surface(width, height, self._drag)
+        cr.set_source_rgba(0.55, 0.60, 0.70, 0.55)
+        cr.set_line_width(1.0)
+        cr.set_dash([4.0, 4.0])
+        cr.rectangle(fx + 0.5, fy + 0.5, max(1.0, fw - 1), max(1.0, fh - 1))
+        cr.stroke()
+        cr.set_dash([])
+
+        # 弹幕底板：实心，能拖的就是它（拖动中的偏移必须带上，不然不跟手）
+        x, y, panel_w, panel_h, _ = self._box(width, height, self._drag)
+        cr.set_source_rgba(0.35, 0.62, 1.0, 0.35)
+        cr.rectangle(x, y, panel_w, panel_h)
+        cr.fill()
+        cr.set_source_rgba(0.55, 0.75, 1.0, 0.9)
+        cr.rectangle(x + 0.5, y + 0.5, max(1.0, panel_w - 1), max(1.0, panel_h - 1))
+        cr.stroke()
+
+        # 屏中间画两条参考线，好对中
+        cr.set_source_rgba(0.45, 0.48, 0.55, 0.25)
+        cr.set_line_width(1.0)
+        cr.move_to(sx + sw / 2, sy)
+        cr.line_to(sx + sw / 2, sy + sh)
+        cr.move_to(sx, sy + sh / 2)
+        cr.line_to(sx + sw, sy + sh / 2)
+        cr.stroke()
+
+    def _on_drag_begin(self, _gesture, _x: float, _y: float) -> None:
+        self._drag = (0.0, 0.0)
+        if self._cursor_grab is not None:
+            self.set_cursor(self._cursor_grab)
+
+    def _on_drag_update(self, _gesture, off_x: float, off_y: float) -> None:
+        if (off_x, off_y) == self._drag:
+            return
+        self._drag = (off_x, off_y)
+        # 鼠标一个事件一个事件地来，重画合并到 ~60fps，不然一张卡上重绘很卡
+        if not self._redraw_id:
+            self._redraw_id = GLib.timeout_add(16, self._redraw)
+
+    def _redraw(self) -> bool:
+        self._redraw_id = 0
+        self.queue_draw()
+        return False
+
+    def _on_drag_end(self, _gesture, off_x: float, off_y: float) -> None:
+        """松手就把方块落在哪儿翻译成「贴哪条边 + 上下左右微调」。"""
+        if self._redraw_id:
+            GLib.source_remove(self._redraw_id)
+            self._redraw_id = 0
+        width, height = self.get_width(), self.get_height()
+        self._drag = (0.0, 0.0)
+        try:
+            self.set_cursor(Gdk.Cursor.new_from_name("grab", None))
+        except Exception:  # pragma: no cover
+            pass
+        if width <= 0 or height <= 0:
+            return
+        sx, sy, sw, sh, scale = self._screen(width, height)
+        scale = max(scale, 1e-3)
+        x, y, panel_w, panel_h, _ = self._box(width, height, (off_x, off_y))
+
+        # 只贴四个角：落点在哪半边就用哪个角，中间方位合成器会忽略 margin，
+        # 怎么拖都不动（就是之前"离屏幕那么远却贴边"的原因）。
+        col = "left" if x + panel_w / 2 < sx + sw / 2 else "right"
+        row = "top" if y + panel_h / 2 < sy + sh / 2 else "bottom"
+        anchor = f"{row}-{col}"
+
+        values = self.window.values
+        margin = float(values["margin"]) * scale
+        surface_w = min(sw, max(8.0, float(values["width"]) * scale))
+        surface_h = min(sh, max(8.0, float(values["height"]) * scale))
+        # 底板贴在窗口底边，所以反解时要先换成窗口的位置
+        surface_x = sx + margin if col == "left" else sx + sw - margin - surface_w
+        surface_y = sy + margin if row == "top" else sy + sh - margin - surface_h
+        natural_x = surface_x                       # 底板左边 = 窗口左边
+        natural_y = surface_y + surface_h - panel_h  # 底板贴窗口底边
+
+        def snap(pixels: float) -> int:
+            step = int(round(round(pixels / scale) / 2.0) * 2)  # 2px 一格
+            return max(-3000, min(3000, step))
+
+        # 贴右边/贴底时，正数偏移是把窗口往屏幕里推（跟 overlay 的语义一致）
+        offset_x = (natural_x - x) if col == "right" else (x - natural_x)
+        offset_y = (natural_y - y) if row == "bottom" else (y - natural_y)
+        self.window.apply_position(anchor, snap(offset_x), snap(offset_y), redraw=False)
 
 
 class LoginDialog(Adw.Dialog):
@@ -313,13 +456,15 @@ class ConfigWindow(Adw.ApplicationWindow):
         self.set_size_request(560, 480)
         self.values = config.load()
         self._saved = dict(self.values)
+        self.outputs = self._detect_outputs()
+        self.screen_size = self._screen_size()
         self._loading = True
         self._save_timer = 0
         self._sliders: dict[str, Gtk.Scale] = {}
         self._toast = Adw.ToastOverlay()
         self._build_ui()
         self._loading = False
-        self._sync_scale_slider()
+        self._sync_sliders()
         self.refresh_status()
         GLib.timeout_add_seconds(4, self._poll_status)
 
@@ -393,7 +538,10 @@ class ConfigWindow(Adw.ApplicationWindow):
         self.restart_button.set_tooltip_text(_("Restart the overlay"))
         self.restart_button.add_css_class("suggested-action")
         self.restart_button.connect("clicked", lambda *_: self._service_action("restart"))
-        for button in (self.start_button, self.stop_button, self.restart_button):
+        self.test_button = Gtk.Button(icon_name="mail-send-symbolic")
+        self.test_button.set_tooltip_text(_("Test danmaku"))  # 本地模拟，不会发到直播间
+        self.test_button.connect("clicked", lambda *_: self._send_test_danmaku())
+        for button in (self.start_button, self.stop_button, self.restart_button, self.test_button):
             buttons.append(button)
 
         self.process_row = Adw.ActionRow(title=_("Overlay process"))
@@ -406,55 +554,33 @@ class ConfigWindow(Adw.ApplicationWindow):
         page.add(room_group)
 
         anchor_group = Adw.PreferencesGroup(title=_("Position settings"))
-        grid = Gtk.Grid()
-        grid.set_row_spacing(4)
-        grid.set_column_spacing(4)
-        grid.set_halign(Gtk.Align.CENTER)
-        grid.set_margin_top(6)
-        grid.set_margin_bottom(6)
+        anchor_group.set_description(_("Position hint"))
         self.anchor_buttons: dict[str, Gtk.ToggleButton] = {}
-        first: Gtk.ToggleButton | None = None
-        for index, (name, glyph) in enumerate(ANCHORS):
-            button = Gtk.ToggleButton(label=glyph)
-            button.set_tooltip_text(_(f"anchor-{name}"))
-            button.add_css_class("flat")
-            button.set_size_request(46, -1)
-            if first is None:
-                first = button
-            else:
-                button.set_group(first)
-            button.set_active(self.values["anchor"] == name)
-            button.connect("toggled", self._on_anchor_toggled, name)
-            grid.attach(button, index % 3, index // 3, 1, 1)
-            self.anchor_buttons[name] = button
-        anchor_group.add(WidgetRow(grid, margin=8))
-
         self.sketch = ScreenSketch(self)
-        self.sketch.set_halign(Gtk.Align.CENTER)
+        self.sketch.set_hexpand(True)
         anchor_group.add(WidgetRow(self.sketch, margin=10))
 
-        self._add_slider(
-            anchor_group, "margin", _("Margin"), 0, 240, 2, "px", subtitle=_("Margin hint")
+        outputs = list(self.outputs)
+        for name in service.list_outputs():
+            if name not in outputs:
+                outputs.append(name)
+        current = self.values.get("output")
+        if current and current not in outputs:
+            outputs.append(current)
+        self.output_items = [_("Auto (compositor)")] + outputs
+        self.output_row = Adw.ComboRow(title=_("Display"))
+        self.output_row.set_subtitle(_("Display hint"))
+        self.output_row.set_model(Gtk.StringList.new(self.output_items))
+        self.output_row.set_selected(
+            0 if not current else max(0, self.output_items.index(current))
         )
+        self.output_row.connect("notify::selected", self._on_output_selected)
+        anchor_group.add(self.output_row)
+        # 「缩放」是整体放大倍数：字和行距一起放大。
+        # 之前这个滑块写的是设备像素比，设成 50% 反而让合成器把画面放大，字看着更大。
         self._add_slider(
-            anchor_group, "offset_x", _("Offset X"), -400, 400, 2, "px", subtitle=_("Offset X hint")
+            anchor_group, "zoom", _("Scale"), 50, 300, 5, "%", subtitle=_("Scale hint")
         )
-        self._add_slider(
-            anchor_group, "offset_y", _("Offset Y"), -400, 400, 2, "px", subtitle=_("Offset Y hint")
-        )
-
-        layer_row = Adw.ComboRow(title=_("Layer"))
-        layer_row.set_subtitle(_("Layer hint"))
-        layer_row.set_model(Gtk.StringList.new([_(key) for _name, key in LAYERS]))
-        layer_row.set_selected([name for name, _key in LAYERS].index(self.values["layer"]))
-        layer_row.connect("notify::selected", self._on_layer_selected)
-        anchor_group.add(layer_row)
-        self.output_row = self._entry_row(anchor_group, "output", _("Output"), None)
-        self.scale_row = Adw.SwitchRow(title=_("Manual scale"), subtitle=_("Scale hint"))
-        self.scale_row.set_active(self.values.get("scale") is not None)
-        self.scale_row.connect("notify::active", self._on_scale_toggled)
-        anchor_group.add(self.scale_row)
-        self._add_slider(anchor_group, "scale", _("Scale"), 50, 300, 5, "%")
         page.add(anchor_group)
 
         timing_group = Adw.PreferencesGroup(title=_("Timing"))
@@ -649,7 +775,11 @@ class ConfigWindow(Adw.ApplicationWindow):
             return False
         self._saved = dict(self.values)
         if pending:
-            self.toast(_("Applied, restart needed"))
+            # 浮层正在跑就直接重启，别让用户自己去点 ⟳
+            if service.unit_exists() and service.is_active():
+                self._service_action("restart")
+            else:
+                self.toast(_("Applied, restart needed"))
         return False
 
     def _on_text_changed(self, row: Adw.EntryRow, key: str) -> None:
@@ -765,18 +895,89 @@ class ConfigWindow(Adw.ApplicationWindow):
         if 0 <= index < len(LAYERS):
             self._set("layer", LAYERS[index][0])
 
-    def _on_scale_toggled(self, row: Adw.SwitchRow, _param) -> None:
+    def _sync_sliders(self) -> None:
+        """把 values 里的值刷回滑块上（拖完方块、外部改配置之后用）。"""
+        self._loading = True
+        for key in ("zoom", "offset_x", "offset_y", "margin"):
+            slider = self._sliders.get(key)
+            if slider is None:
+                continue
+            raw = self.values.get(key)
+            if key == "zoom":
+                value = float(raw or 1.0) * 100
+            else:
+                value = float(raw or 0)
+            # 夹在滑块量程里，免得设成 999 之后滑块跟实际不一样
+            adjustment = slider.get_adjustment()
+            value = min(max(value, adjustment.get_lower()), adjustment.get_upper())
+            slider.set_value(value)
+        self._loading = False
+
+    def apply_position(self, anchor: str, offset_x: int, offset_y: int, redraw: bool = True) -> None:
+        """九宫格 + 微调一起改（拖方块就是走这条路）。"""
+        self._loading = True
+        self.values["anchor"] = anchor
+        self.values["offset_x"] = offset_x
+        self.values["offset_y"] = offset_y
+        button = self.anchor_buttons.get(anchor)
+        if button is not None:
+            button.set_active(True)
+        self._loading = False
+        self._sync_sliders()
+        self._schedule_save()
+        self.sketch.queue_draw()
+
+    def _detect_outputs(self) -> dict[str, tuple[int, int]]:
+        """先问 GTK 要显示器（KDE/GNOME/niri/sway/X11 都走这条），
+        再拿 niri/wlroots/Hyprland 的命令补一补——GTK 认不出的名字只有它们知道。"""
+        found: dict[str, tuple[int, int]] = {}
+        try:
+            display = self.get_display() or Gdk.Display.get_default()
+            monitors = display.get_monitors() if display is not None else None
+            for index in range(monitors.get_n_items() if monitors is not None else 0):
+                monitor = monitors.get_item(index)
+                name = None
+                for getter in ("get_connector", "get_model"):
+                    try:
+                        name = getattr(monitor, getter)()
+                    except (AttributeError, TypeError):  # 老 GTK 没有 get_connector
+                        name = None
+                    if name:
+                        break
+                geometry = monitor.get_geometry()
+                if name and geometry.width > 0:
+                    found.setdefault(name, (geometry.width, geometry.height))
+        except Exception:  # pragma: no cover - 没有显示后端就算了
+            pass
+        for name, size in service.output_sizes().items():
+            found.setdefault(name, size)
+        return found
+
+    def _screen_size(self) -> tuple[int, int]:
+        """目标显示器（没指定就第一块）的逻辑分辨率，问不到就 16:9。"""
+        target = self.values.get("output")
+        if target and target in self.outputs:
+            return self.outputs[target]
+        if self.outputs:
+            return next(iter(self.outputs.values()))
+        return (1920, 1080)
+
+    def _send_test_danmaku(self) -> None:
+        """往浮层盯着的文件里写几行样例，屏幕上立刻能看到效果。"""
+        try:
+            config.send_test_danmaku()
+        except OSError as error:
+            self.toast(_("Command failed: {err}").format(err=error))
+            return
+        self.toast(_("Test danmaku sent"))
+
+    def _on_output_selected(self, row: Adw.ComboRow, _param) -> None:
         if self._loading:
             return
-        slider = self._sliders.get("scale")
-        if slider is not None:
-            slider.set_sensitive(row.get_active())
-        self._set("scale", (slider.get_value() / 100.0) if row.get_active() and slider else None)
-
-    def _sync_scale_slider(self) -> None:
-        slider = self._sliders.get("scale")
-        if slider is not None:
-            slider.set_sensitive(self.scale_row.get_active())
+        index = row.get_selected()
+        model = row.get_model()
+        name = None if index == 0 else model.get_string(index)
+        self._set("output", name)
 
     def _on_autostart_toggled(self, row: Adw.SwitchRow, _param) -> None:
         if self._loading:

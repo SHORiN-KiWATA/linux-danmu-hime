@@ -854,8 +854,9 @@ class ConfigWindow(Adw.ApplicationWindow):
             self.login_badge.set_text(
                 _("Logged in as {uid}").format(uid=uid) if uid else _("Logged in")
             )
-            self.login_badge.remove_css_class("dim-label")
-            self.login_badge.add_css_class("success")
+            # 别整行刷绿，低调一点：保持默认灰色
+            self.login_badge.remove_css_class("success")
+            self.login_badge.add_css_class("dim-label")
             self.login_button.set_label(_("Log in again"))
         else:
             self.login_badge.set_text(_("Not logged in"))

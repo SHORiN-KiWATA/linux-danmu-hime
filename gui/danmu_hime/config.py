@@ -20,26 +20,26 @@ DEFAULTS: dict[str, object] = {
     "cookie": None,
     "output": None,
     "anchor": "bottom-right",
-    "layer": "top",
-    "width": 420,
+    "width": 381,
     "height": 560,
-    "margin": 16,
-    "offset_x": 0,
-    "offset_y": 0,
-    "font_size": 20.0,
+    "margin": 20,
+    "offset_x": -20,
+    "offset_y": 456,
+    "font_size": 30.0,
     "line_gap": 4.0,
-    "opacity": 0.55,
-    "ttl": 12.0,
-    "fade": 0.6,
-    "max_lines": 200,
+    "opacity": 0.6,
+    "ttl": 20.0,
+    "fade": 1.0,
+    "max_lines": 101,
     "font": None,
     "emoji_font": None,
-    "medal": True,
+    "medal": False,
     "gift": True,
-    "name_color": "#84aaff",
-    "text_color": "#eceef4",
-    "panel_color": "#0a0c12",
+    "name_color": "#ffe58a",
+    "text_color": "#ffffff",
+    "panel_color": "#000000",
     "scale": None,
+    "zoom": 1.0,
 }
 
 # 整数的键（写回文件时别写成 420.0）
@@ -102,6 +102,36 @@ PRESETS = {
     "弹幕姬": ("#ffe58a", "#ffffff", "#000000"),
     "默认": ("#84aaff", "#eceef4", "#0a0c12"),
 }
+
+
+# 「测试弹幕」按钮往这个文件里追加行，浮层盯着它读（就在配置文件旁边）
+TEST_LINES = [
+    "这是一条测试弹幕",
+    "[dog] 表情也能画出来了",
+    "短",
+    "长一点的弹幕用来看看换行会不会在左边留空格，中文英文混排 mixed with English words 也要能断开",
+    "🎉🎉 emoji 和 [大哭] 一起上",
+    "测试弹幕也按你设的停留时间自己淡出",
+]
+
+
+def test_path() -> Path:
+    return config_path().with_name("test-danmaku.jsonl")
+
+
+def send_test_danmaku(lines=None) -> Path:
+    """追加几行样例弹幕；浮层每秒看一眼这个文件，看到就当成真弹幕画出来。"""
+    path = test_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if path.stat().st_size > 64 * 1024:
+            path.write_text("", encoding="utf-8")
+    except OSError:
+        pass
+    with path.open("a", encoding="utf-8") as handle:
+        for line in lines or TEST_LINES:
+            handle.write(f"{line}\n")
+    return path
 
 
 def login_state(values: dict) -> tuple[str, int]:

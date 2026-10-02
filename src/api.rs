@@ -140,6 +140,23 @@ fn install_crypto_provider() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
+/// 下载一张表情图（不需要登录）。给浮层拉 `[dog]` 这种弹幕表情用。
+pub async fn fetch_image(url: &str) -> Result<Vec<u8>> {
+    install_crypto_provider();
+    let http = reqwest::Client::builder()
+        .user_agent(USER_AGENT)
+        .build()
+        .context("构建 HTTP client 失败")?;
+    let response = http
+        .get(url)
+        .header("Referer", "https://live.bilibili.com/")
+        .send()
+        .await
+        .with_context(|| format!("请求表情图失败：{url}"))?
+        .error_for_status()?;
+    Ok(response.bytes().await?.to_vec())
+}
+
 /// 一个已带 cookie 的 HTTP 会话。
 pub struct BiliSession {
     http: reqwest::Client,

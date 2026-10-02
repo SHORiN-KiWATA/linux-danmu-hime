@@ -755,6 +755,11 @@ enum UiEvent {
     Danmaku { prefix: String, text: String },
     /// 连不上之类的问题，也用一条会淡出的提示表示一下。
     Notice(String),
+    /// 后台下好的表情原图（主线程负责交给渲染器）。
+    Emote {
+        ch: char,
+        bytes: std::sync::Arc<Vec<u8>>,
+    },
 }
 
 /// 屏上的一条弹幕（画成什么样由渲染层决定）。
@@ -887,6 +892,13 @@ impl Overlay {
         let (kind, prefix, text) = match message {
             UiEvent::Danmaku { prefix, text } => (Kind::Danmaku, prefix, text),
             UiEvent::Notice(text) => (Kind::System, String::new(), text),
+            UiEvent::Emote { ch, bytes } => {
+                // 表情原图到了：挂到渲染器上，之后这个字符一律贴真图
+                if self.renderer.load_emote(ch, &bytes) {
+                    self.dirty = true;
+                }
+                return;
+            }
         };
         self.entries.push_back(Entry {
             kind,
@@ -1287,6 +1299,9 @@ fn spawn_danmaku(room_id: i64, cookies: Cookies, tx: Sender<UiEvent>) {
             let _ = tx.send(UiEvent::Notice("创建 tokio runtime 失败".into()));
             return;
         };
+        let handle = runtime.handle().clone();
+        let seen_emotes: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<char>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
         runtime.block_on(async move {
             let (inner_tx, mut inner_rx) = tokio::sync::mpsc::unbounded_channel();
             tokio::spawn(DanmakuClient::new(room_id, cookies).run(inner_tx));
@@ -1324,10 +1339,24 @@ fn spawn_danmaku(room_id: i64, cookies: Cookies, tx: Sender<UiEvent>) {
                         continue;
                     }
                     ClientEvent::Fatal { message } => UiEvent::Notice(format!("连接失败：{message}")),
-                    ClientEvent::Danmaku(event) => match to_line(event) {
-                        Some((prefix, text)) => UiEvent::Danmaku { prefix, text },
-                        None => continue,
-                    },
+                    ClientEvent::Danmaku(event) => {
+                        // 弹幕自带表情原图的话顺手下一张（同一字符只下一次，之后走缓存）
+                        if let DanmakuEvent::Danmaku(danmaku) = &event
+                            && let Some(emote) = &danmaku.emote
+                        {
+                            spawn_emote_download(
+                                &handle,
+                                &tx,
+                                &seen_emotes,
+                                emote_placeholder(&emote.text),
+                                &emote.url,
+                            );
+                        }
+                        match to_line(event) {
+                            Some((prefix, text)) => UiEvent::Danmaku { prefix, text },
+                            None => continue,
+                        }
+                    }
                 };
                 if tx.send(message).is_err() {
                     break;
@@ -1399,8 +1428,82 @@ const EMOTE_TABLE: &[(&str, &str)] = &[
     ("大哭大闹", "\u{1F62D}"),
 ];
 
+/// 表情 token 对应的占位字符。
+///
+/// - 表里有的（`[dog]` 这种）用表里那个 emoji：字体的 emoji 被 B 站原图顶掉，
+///   宽度、基线、缩放全都沿用现成的 emoji 排版，一行里混排也不会错位。
+/// - 表里没有的（房间大表情之类）按 token 哈希到私用区字符：主字体没有这个字，
+///   走的还是同一条「主字体缺字 → 画位图」的路。
+fn emote_placeholder(token: &str) -> char {
+    let name = token.trim_start_matches('[').trim_end_matches(']');
+    if let Some((_, emoji)) = EMOTE_TABLE.iter().find(|(key, _)| *key == name)
+        && let Some(ch) = emoji.chars().next()
+    {
+        return ch;
+    }
+    let hash = token
+        .bytes()
+        .fold(0u32, |acc, byte| acc.wrapping_mul(31).wrapping_add(byte as u32));
+    char::from_u32(0xE000 + hash % 0x1900).unwrap_or(char::from_u32(0xE000).unwrap())
+}
+
+/// 表情图缓存目录：`$XDG_CACHE_HOME/danmu-hime/emotes`。
+fn emote_cache_dir() -> Option<std::path::PathBuf> {
+    let base = std::env::var_os("XDG_CACHE_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".cache"))
+        })?;
+    Some(base.join("danmu-hime").join("emotes"))
+}
+
+/// 拉一张表情图：缓存里有就直接发给主线程，没有就后台下一张、下好再发。
+fn spawn_emote_download(
+    handle: &tokio::runtime::Handle,
+    tx: &Sender<UiEvent>,
+    seen: &std::sync::Arc<std::sync::Mutex<std::collections::HashSet<char>>>,
+    ch: char,
+    url: &str,
+) {
+    if !seen.lock().unwrap_or_else(|err| err.into_inner()).insert(ch) {
+        return;
+    }
+    let cached =
+        emote_cache_dir().map(|dir| dir.join(format!("{:x}.png", md5::compute(url.as_bytes()))));
+    if let Some(path) = &cached
+        && let Ok(bytes) = std::fs::read(path)
+    {
+        let _ = tx.send(UiEvent::Emote {
+            ch,
+            bytes: std::sync::Arc::new(bytes),
+        });
+        return;
+    }
+    let (tx, url) = (tx.clone(), url.to_string());
+    handle.spawn(async move {
+        match danmu_hime::api::fetch_image(&url).await {
+            Ok(bytes) => {
+                if let Some(path) = &cached
+                    && let Some(dir) = path.parent()
+                {
+                    let _ = std::fs::create_dir_all(dir);
+                    // 缓存写失败无所谓，内存里这份照样能用
+                    let _ = std::fs::write(path, &bytes);
+                }
+                let _ = tx.send(UiEvent::Emote {
+                    ch,
+                    bytes: std::sync::Arc::new(bytes),
+                });
+            }
+            Err(error) => eprintln!("# 表情图下载失败：{error}"),
+        }
+    });
+}
+
 /// 把弹幕里的 `[dog]` 之类换成对应的 emoji；表里没有的原样留着。
-fn expand_emotes(text: &str) -> String {
+/// 这条弹幕自带表情原图时（`emote`），表里没有的 token 也换成占位字符——
+/// 原图下好之后渲染层会用真图接管这个字符。
+fn expand_emotes_with(text: &str, emote: Option<&danmu_hime::protocol::Emote>) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(start) = rest.find('[') {
@@ -1414,11 +1517,15 @@ fn expand_emotes(text: &str) -> String {
         let name = &after[..end];
         match EMOTE_TABLE.iter().find(|(key, _)| *key == name) {
             Some((_, emoji)) => out.push_str(emoji),
-            None => {
-                out.push('[');
-                out.push_str(name);
-                out.push(']');
-            }
+            None => match emote.filter(|emote| emote.text == format!("[{name}]")) {
+                // 表里没有，但这条弹幕带了原图：换成占位字符等图
+                Some(_) => out.push(emote_placeholder(&format!("[{name}]"))),
+                None => {
+                    out.push('[');
+                    out.push_str(name);
+                    out.push(']');
+                }
+            },
         }
         rest = &after[end + 1..];
     }
@@ -1460,7 +1567,7 @@ fn danmaku_line(danmaku: &danmu_hime::protocol::Danmaku) -> Option<(String, Stri
         prefix.push_str(&format!("<{guard}> "));
     }
     prefix.push_str(&format!("{}: ", danmaku.uname));
-    Some((prefix, expand_emotes(&danmaku.text)))
+    Some((prefix, expand_emotes_with(&danmaku.text, danmaku.emote.as_ref())))
 }
 
 /// 字体：优先 fontconfig（能正确带出 .ttc 的 index），再退回常见路径。
@@ -1797,6 +1904,47 @@ fn wakeup_for(age: Duration, ttl: Duration, fade: Duration) -> Duration {
 }
 
 #[cfg(test)]
+mod emote_tests {
+    use super::*;
+
+    #[test]
+    fn table_emotes_use_the_emoji_from_the_table() {
+        assert_eq!(emote_placeholder("[dog]"), '\u{1F436}');
+        assert_eq!(emote_placeholder("[大笑]"), '\u{1F604}');
+    }
+
+    #[test]
+    fn unknown_emotes_get_a_stable_private_use_char() {
+        let ch = emote_placeholder("[tv_doge]");
+        assert!((0xE000..=0xF8FF).contains(&(ch as u32)), "应该落在私用区：{ch:?}");
+        assert_eq!(ch, emote_placeholder("[tv_doge]"), "同一个 token 每次都该一样");
+        assert_ne!(ch, emote_placeholder("[小电视表情]"));
+    }
+
+    #[test]
+    fn emote_with_image_replaces_unknown_token() {
+        let emote = danmu_hime::protocol::Emote {
+            text: "[tv_doge]".into(),
+            url: "https://i0.hdslb.com/bfs/emote/x.png".into(),
+        };
+        assert_eq!(
+            expand_emotes_with("好耶[tv_doge]！", Some(&emote)),
+            format!("好耶{}！", emote_placeholder("[tv_doge]"))
+        );
+        // 表里有的一律走表，不受这条弹幕的表情影响
+        assert_eq!(expand_emotes_with("好耶[dog]", Some(&emote)), "好耶\u{1F436}");
+        // 不是这条弹幕带的那个 token 就原样留着
+        assert_eq!(expand_emotes_with("好耶[别]表情]", Some(&emote)), "好耶[别]表情]");
+    }
+
+    #[test]
+    fn emote_cache_dir_sits_under_xdg_cache() {
+        let dir = emote_cache_dir().expect("HOME/XDG_CACHE_HOME 总有吧");
+        assert!(dir.ends_with("danmu-hime/emotes"), "{dir:?}");
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1877,12 +2025,12 @@ mod tests {
 
     #[test]
     fn emote_tokens_become_emoji() {
-        assert_eq!(expand_emotes("好耶[dog]"), "好耶\u{1F436}");
-        assert_eq!(expand_emotes("[大笑][大笑]"), "\u{1F604}\u{1F604}");
+        assert_eq!(expand_emotes_with("好耶[dog]", None), "好耶\u{1F436}");
+        assert_eq!(expand_emotes_with("[大笑][大笑]", None), "\u{1F604}\u{1F604}");
         // 表里没有的、以及没闭合的方括号，原样留着
-        assert_eq!(expand_emotes("看这个[没听过的表情]"), "看这个[没听过的表情]");
-        assert_eq!(expand_emotes("半个[方括号"), "半个[方括号");
-        assert_eq!(expand_emotes("没有表情"), "没有表情");
+        assert_eq!(expand_emotes_with("看这个[没听过的表情]", None), "看这个[没听过的表情]");
+        assert_eq!(expand_emotes_with("半个[方括号", None), "半个[方括号");
+        assert_eq!(expand_emotes_with("没有表情", None), "没有表情");
     }
 
     #[test]

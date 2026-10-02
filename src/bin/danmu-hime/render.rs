@@ -77,6 +77,9 @@ pub struct Renderer {
     base_line_gap: f32,
     /// 彩色 emoji 字体（Noto Color Emoji 这类 CBDT 位图字体，可选）。
     emoji_font: Option<(memmap2::Mmap, u32)>,
+    /// B 站弹幕表情（`[dog]` 这种）的原图，挂在占位字符上。
+    /// 有图之后这个字符就不再用字体里的 emoji，直接贴原图。
+    emote_sources: RefCell<HashMap<char, Rc<png::Image>>>,
     /// 解好、缩好的 emoji 位图。按「字符 + 大小」缓存：每帧现解 PNG 太慢。
     emoji_cache: EmojiCache,
     /// 用户要的整体放大倍数（GUI 的「缩放」滑块）。
@@ -108,6 +111,7 @@ impl Renderer {
             zoom: 1.0,
             emoji_font: None,
             emoji_cache: RefCell::new(HashMap::new()),
+            emote_sources: RefCell::new(HashMap::new()),
         }
     }
 
@@ -117,6 +121,23 @@ impl Renderer {
         self.zoom = zoom.clamp(0.2, 5.0);
         self.theme.font_size = self.base_font_size * self.scale * self.zoom;
         self.theme.line_gap = self.base_line_gap * self.scale * self.zoom;
+    }
+
+    /// 收下一张 B 站表情原图，挂到占位字符上（`[dog]` → 字体里那个 🐶）。
+    /// 返回 false 说明这张图解不开（不是 png 之类），跳过就行。
+    pub fn load_emote(&self, ch: char, bytes: &[u8]) -> bool {
+        let Ok(image) = png::decode(bytes) else {
+            return false;
+        };
+        if image.width == 0 || image.height == 0 {
+            return false;
+        }
+        self.emote_sources.borrow_mut().insert(ch, Rc::new(image));
+        // 同一个字符之前可能按「字体 emoji」缓存过，尺寸也不一样，全丢掉
+        self.emoji_cache
+            .borrow_mut()
+            .retain(|(cached, _), _| *cached != ch);
+        true
     }
 
     pub fn set_emoji_font(&mut self, font: memmap2::Mmap, index: u32) {
@@ -483,7 +504,18 @@ fn draw_text(
         if let Some(prev) = prev {
             *x += scaled.kern(prev, id);
         }
-        let advance = scaled.h_advance(id);
+        let mut advance = scaled.h_advance(id);
+        // 挂了 B 站原图的字符（含哈希出来的私用区占位符）一律先画原图：
+        // 主字体里有没有这个字都无所谓，宽度统一按一个 em 算，免得字体给 0 宽度。
+        if self.emote_sources.borrow().contains_key(&ch) {
+            if advance < size * 0.5 {
+                advance = size;
+            }
+            self.draw_emoji(pixmap, ch, *x, baseline, advance, alpha);
+            *x += advance;
+            prev = Some(id);
+            continue;
+        }
         if id.0 == 0 {
             // 主字体没这个字：大概率是 emoji，去彩色字体里找
             self.draw_emoji(pixmap, ch, *x, baseline, advance, alpha);
@@ -523,10 +555,13 @@ impl Renderer {
         advance: f32,
         alpha: f32,
     ) {
-        let Some((font, index)) = &self.emoji_font else {
-            return;
-        };
-        let Some(image) = self.emoji_image(font, *index, ch, advance.max(4.0)) else {
+        let max_width = advance.max(4.0);
+        // 有 B 站原图就用原图，没有才去字体里找彩色 emoji
+        let image = self.emote_image(ch, max_width).or_else(|| {
+            let (font, index) = self.emoji_font.as_ref()?;
+            self.emoji_image(font, *index, ch, max_width)
+        });
+        let Some(image) = image else {
             return;
         };
         let left = x + (advance - image.width as f32) * 0.5;
@@ -548,6 +583,30 @@ impl Renderer {
             return hit.clone();
         }
         let built = self.build_emoji(font, index, ch, max_width).map(Rc::new);
+        let mut cache = self.emoji_cache.borrow_mut();
+        if cache.len() >= 512 {
+            cache.clear();
+        }
+        cache.insert(key, built.clone());
+        built
+    }
+
+    /// 取（并缓存）一张缩好的 B 站表情位图；这个字符没挂表情就返回 None。
+    /// 缩放口径跟 [`Renderer::build_emoji`] 一致：按「别超过这个字的宽度」来。
+    fn emote_image(&self, ch: char, max_width: f32) -> Option<Rc<Emoji>> {
+        let key = (ch, (max_width * 4.0).round().clamp(1.0, 4096.0) as u16);
+        if let Some(hit) = self.emoji_cache.borrow().get(&key) {
+            return hit.clone();
+        }
+        let source = self.emote_sources.borrow().get(&ch).cloned()?;
+        let factor = max_width / source.width as f32;
+        let width = ((source.width as f32 * factor).round() as u32).max(1);
+        let height = ((source.height as f32 * factor).round() as u32).max(1);
+        let built = Some(Rc::new(Emoji {
+            width,
+            height,
+            rgba: resize(&source, width, height),
+        }));
         let mut cache = self.emoji_cache.borrow_mut();
         if cache.len() >= 512 {
             cache.clear();
@@ -675,9 +734,38 @@ mod tests {
         (map, 0)
     }
 
+    /// 8×8 纯红 PNG：给表情渲染测试用，免得依赖磁盘上的图片。
+    const RED_PNG: &[u8] = &[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x08, 0x08, 0x06, 0x00, 0x00, 0x00, 0xc4, 0x0f, 0xbe, 0x8b, 0x00, 0x00, 0x00, 0x12, 0x49, 0x44, 0x41, 0x54, 0x78, 0xda, 0x63, 0xf8, 0xcf, 0xc0, 0xf0, 0x1f, 0x1f, 0x66, 0x18, 0x19, 0x0a, 0x00, 0xc2, 0xd7, 0x7f, 0x81, 0xd5, 0x03, 0x32, 0xfd, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82];
+
     fn renderer() -> Renderer {
         let (data, index) = font();
         Renderer::new(data, index, Theme::default())
+    }
+
+    #[test]
+    fn loaded_emote_replaces_the_placeholder_glyph() {
+        let renderer = renderer();
+        let lines = [line("前\u{E0F1}后")];
+        let before = renderer.render(240, 60, &lines, 0.0);
+        assert!(renderer.load_emote('\u{E0F1}', RED_PNG), "这张 PNG 应该能解开");
+        let after = renderer.render(240, 60, &lines, 0.0);
+        assert_ne!(before, after, "挂上原图之后画面应该变了");
+        // 渲染输出换过 R/B（wl_shm 是 BGRA），所以红色看第 2 个字节
+        let red = after
+            .chunks_exact(4)
+            .filter(|px| px[2] > 200 && px[0] < 80 && px[3] > 200)
+            .count();
+        assert!(red > 20, "红色像素太少（{red}），原图没画上去");
+    }
+
+    #[test]
+    fn bad_emote_bytes_are_ignored() {
+        let renderer = renderer();
+        assert!(!renderer.load_emote('\u{E0F2}', b"not a png"));
+        let lines = [line("\u{E0F2}")];
+        let with_bad = renderer.render(120, 40, &lines, 0.0);
+        let empty = renderer.render(120, 40, &[line("")], 0.0);
+        assert_eq!(with_bad, empty, "解不开的图应该什么都不画");
     }
 
     #[test]

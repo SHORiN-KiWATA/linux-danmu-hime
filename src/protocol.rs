@@ -111,6 +111,16 @@ pub struct Medal {
     pub anchor: String,
 }
 
+/// 弹幕里带的 B 站表情（`[dog]` 这种）。现行协议直接在弹幕里带原图 URL，
+/// 所以不需要任何名字→表情的对照表，也不用登录。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Emote {
+    /// 弹幕原文里的那个 token，比如 `[dog]`。
+    pub text: String,
+    /// 表情原图（B 站 CDN 的 png/gif）。
+    pub url: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Danmaku {
     pub text: String,
@@ -122,6 +132,8 @@ pub struct Danmaku {
     pub guard: i64,
     pub medal: Option<Medal>,
     pub ts: i64,
+    /// 这条弹幕带的表情（普通文字弹幕没有）。
+    pub emote: Option<Emote>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -344,6 +356,7 @@ fn parse_danmaku(payload: &serde_json::Value) -> Option<DanmakuEvent> {
         })
         .unwrap_or(0);
     let medal = info.get(3).and_then(parse_medal);
+    let emote = meta.and_then(|m| parse_emote(m));
 
     Some(DanmakuEvent::Danmaku(Danmaku {
         text,
@@ -354,7 +367,61 @@ fn parse_danmaku(payload: &serde_json::Value) -> Option<DanmakuEvent> {
         guard,
         medal,
         ts,
+        emote,
     }))
+}
+
+/// 从 `info[0]` 的几格里找表情。字段位置各客户端不大一样（有的还是一段 JSON
+/// 字符串），所以不认下标：整格扫一遍，认「`[名字]` + 图片 URL」这种组合。
+fn parse_emote(meta: &[serde_json::Value]) -> Option<Emote> {
+    meta.iter().find_map(scan_emote)
+}
+
+fn scan_emote(value: &serde_json::Value) -> Option<Emote> {
+    match value {
+        // 有的客户端把这一格塞成 JSON 字符串
+        serde_json::Value::String(raw) => {
+            serde_json::from_str(raw).ok().and_then(|parsed| scan_emote(&parsed))
+        }
+        serde_json::Value::Array(items) => items.iter().find_map(scan_emote),
+        serde_json::Value::Object(map) => {
+            // 形式一：{"text": "[dog]", "url": "https://…/xxx.png"}
+            if let (Some(text), Some(url)) = (
+                map.get("text").and_then(serde_json::Value::as_str),
+                map.get("url").and_then(serde_json::Value::as_str),
+            ) && is_emote_token(text)
+                && is_emote_url(url)
+            {
+                return Some(Emote {
+                    text: text.to_string(),
+                    url: url.to_string(),
+                });
+            }
+            // 形式二：{"emots": {"[dog]": {"url": "https://…/xxx.png"}}}
+            for (key, item) in map {
+                if is_emote_token(key)
+                    && let Some(url) = item.get("url").and_then(serde_json::Value::as_str)
+                    && is_emote_url(url)
+                {
+                    return Some(Emote {
+                        text: key.clone(),
+                        url: url.to_string(),
+                    });
+                }
+            }
+            map.values().find_map(scan_emote)
+        }
+        _ => None,
+    }
+}
+
+fn is_emote_token(text: &str) -> bool {
+    text.len() <= 32 && text.starts_with('[') && text.ends_with(']')
+}
+
+fn is_emote_url(url: &str) -> bool {
+    url.starts_with("http")
+        && (url.ends_with(".png") || url.ends_with(".gif") || url.contains("/bfs/"))
 }
 
 fn parse_medal(value: &serde_json::Value) -> Option<Medal> {
@@ -456,6 +523,63 @@ fn parse_interact(data: &serde_json::Value) -> Interact {
             .get("msg_type")
             .and_then(serde_json::Value::as_i64)
             .unwrap_or(0),
+    }
+}
+
+#[cfg(test)]
+mod emote_tests {
+    use super::*;
+
+    fn danmaku_with(extra: serde_json::Value) -> Option<Emote> {
+        let payload = serde_json::json!({
+            "cmd": "DANMU_MSG",
+            "info": [
+                [0, 1, 25, 16777215, 1, 0, 0, "", 0, 0, 0, "", 0, extra, {}, 0],
+                "[dog]",
+                [1234, "某人"]
+            ]
+        });
+        match parse_danmaku(&payload) {
+            Some(DanmakuEvent::Danmaku(d)) => d.emote,
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn flat_emote_object_is_picked_up() {
+        let emote = danmaku_with(serde_json::json!({
+            "text": "[dog]",
+            "url": "https://i0.hdslb.com/bfs/emote/abc.png"
+        }))
+        .expect("应该认出来");
+        assert_eq!(emote.text, "[dog]");
+        assert!(emote.url.ends_with("abc.png"));
+    }
+
+    #[test]
+    fn emots_map_form_is_picked_up() {
+        let emote = danmaku_with(serde_json::json!({
+            "emots": {
+                "[tv_doge]": { "url": "https://i0.hdslb.com/bfs/emote/tvdoge.png", "is_dynamic": 0 }
+            }
+        }))
+        .expect("map 形式也要认");
+        assert_eq!(emote.text, "[tv_doge]");
+    }
+
+    #[test]
+    fn json_string_form_is_picked_up() {
+        let emote = danmaku_with(serde_json::json!(
+            "{\"text\":\"[大笑]\",\"url\":\"https://i0.hdslb.com/bfs/emote/laugh.png\"}"
+        ))
+        .expect("JSON 字符串形式也要认");
+        assert_eq!(emote.text, "[大笑]");
+    }
+
+    #[test]
+    fn plain_danmaku_has_no_emote() {
+        assert!(danmaku_with(serde_json::json!({})).is_none());
+        assert!(danmaku_with(serde_json::json!({"text": "你好", "url": "https://x/y.png"})).is_none());
     }
 }
 

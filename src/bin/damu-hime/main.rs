@@ -787,7 +787,9 @@ struct Overlay {
     buffer_scale: i32,
     /// wp_fractional_scale_v1 对象：合成器给的分数比例从它的事件里来。
     /// 只是把它拿在手里不让对象销毁（销毁了就没事件了）。
-        fractional_scale: Option<WpFractionalScaleV1>,
+        /// 只用来保活这个对象（分数缩放对象销毁了缩放就不生效了）
+    #[allow(dead_code)]
+    fractional_scale: Option<WpFractionalScaleV1>,
     /// wp_viewport：把设备像素的缓冲映射回逻辑尺寸。
     viewport: Option<WpViewport>,
     /// 分数缩放，单位 1/120（120 = 1.0，150 = 1.25）。

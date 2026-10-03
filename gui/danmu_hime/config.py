@@ -35,7 +35,7 @@ DEFAULTS: dict[str, object] = {
     "emoji_font": None,
     "medal": False,
     "gift": True,
-    "gift_icon": True,
+    "gift_icon": False,
     "avatar": True,
     "avatar_round": True,
     "name_color": "#ffe58a",

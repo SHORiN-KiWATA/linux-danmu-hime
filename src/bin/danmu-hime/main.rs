@@ -1081,6 +1081,7 @@ impl Overlay {
         if let Some(round) = config.avatar_round {
             ROUND_AVATAR.store(round, Ordering::Relaxed);
         }
+        // 默认文字优先（礼物姬那种「感谢 X 赠送 辣条 ×3」），要看图标自己开
         if let Some(icon) = config.gift_icon {
             SHOW_GIFT_ICON.store(icon, Ordering::Relaxed);
         }
@@ -1411,7 +1412,7 @@ static SHOW_AVATAR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBoo
 /// 头像裁成圆的（关了就是方图）。
 static ROUND_AVATAR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 /// 要不要给礼物画上小图标。
-static SHOW_GIFT_ICON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+static SHOW_GIFT_ICON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// 礼物 id/名字 → 图地址：起来时从礼物面板拉一次，存盘，下次直接读。
 static GIFT_IMAGES: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<i64, String>>> =
     std::sync::OnceLock::new();

@@ -269,6 +269,7 @@ pub fn parse_command(value: &serde_json::Value) -> Option<DanmakuEvent> {
     match cmd {
         "DANMU_MSG" => parse_danmaku(data),
         "SEND_GIFT" => Some(DanmakuEvent::Gift(parse_gift(data))),
+        "SEND_GIFT_V2" => parse_gift_v2(data).map(DanmakuEvent::Gift),
         "GUARD_BUY" => Some(DanmakuEvent::Guard(parse_guard(data))),
         "SUPER_CHAT_MESSAGE" => Some(DanmakuEvent::SuperChat(parse_super_chat(data))),
         "INTERACT_WORD" => Some(DanmakuEvent::Interact(parse_interact(data))),
@@ -533,6 +534,138 @@ fn parse_medal(value: &serde_json::Value) -> Option<Medal> {
     })
 }
 
+/// `SEND_GIFT_V2`（2026-07 灰度）：`data.pb` 是 base64 的 protobuf
+/// （`SendGiftBroadcast`）。字段号照 blivedm 的 `models/pb.py`。
+/// 一条消息可能带多份礼物（连击），这里取第一份。
+fn parse_gift_v2(data: &serde_json::Value) -> Option<Gift> {
+    let text = data.get("pb").and_then(serde_json::Value::as_str)?;
+    let bytes = base64_decode(text)?;
+    let item = *pb_all(&bytes, 10).first()?;
+    Some(Gift {
+        uid: pb_num(&bytes, 1).unwrap_or(0) as i64,
+        uname: pb_str(&bytes, 2).unwrap_or_else(|| String::from("?")),
+        face: pb_str(&bytes, 3),
+        gift_id: pb_num(item, 1).unwrap_or(0) as i64,
+        gift_name: pb_str(item, 2).unwrap_or_default(),
+        num: pb_num(item, 3).unwrap_or(1) as i64,
+        price: pb_num(item, 5).unwrap_or(0) as i64,
+        coin_type: pb_str(item, 8).unwrap_or_default(),
+        img: pb_all(item, 35).first().and_then(|info| pb_str(info, 1)),
+        action: pb_str(item, 18),
+    })
+}
+
+/// 最小 protobuf 读取器：只认 varint 和 length-delimited，跳过定长那两种。
+struct Proto<'a> {
+    bytes: &'a [u8],
+    at: usize,
+}
+
+enum Field<'a> {
+    Num(u64),
+    Bytes(&'a [u8]),
+}
+
+impl<'a> Proto<'a> {
+    fn varint(&mut self) -> Option<u64> {
+        let (mut value, mut shift) = (0u64, 0u32);
+        while self.at < self.bytes.len() && shift < 64 {
+            let byte = self.bytes[self.at];
+            self.at += 1;
+            value |= u64::from(byte & 0x7f) << shift;
+            if byte & 0x80 == 0 {
+                return Some(value);
+            }
+            shift += 7;
+        }
+        None
+    }
+
+    fn next(&mut self) -> Option<(u32, Field<'a>)> {
+        loop {
+            if self.at >= self.bytes.len() {
+                return None;
+            }
+            let key = self.varint()?;
+            match key & 7 {
+                0 => return Some(((key >> 3) as u32, Field::Num(self.varint()?))),
+                2 => {
+                    let len = self.varint()? as usize;
+                    let end = (self.at + len).min(self.bytes.len());
+                    let slice = &self.bytes[self.at..end];
+                    self.at = end;
+                    return Some(((key >> 3) as u32, Field::Bytes(slice)));
+                }
+                1 => self.at = (self.at + 8).min(self.bytes.len()),
+                5 => self.at = (self.at + 4).min(self.bytes.len()),
+                _ => return None,
+            }
+        }
+    }
+}
+
+fn pb_str(bytes: &[u8], want: u32) -> Option<String> {
+    let mut proto = Proto { bytes, at: 0 };
+    while let Some((field, value)) = proto.next() {
+        if field == want
+            && let Field::Bytes(slice) = value
+        {
+            return std::str::from_utf8(slice).ok().map(str::to_string);
+        }
+    }
+    None
+}
+
+fn pb_num(bytes: &[u8], want: u32) -> Option<u64> {
+    let mut proto = Proto { bytes, at: 0 };
+    while let Some((field, value)) = proto.next() {
+        if field == want
+            && let Field::Num(number) = value
+        {
+            return Some(number);
+        }
+    }
+    None
+}
+
+/// 取某个字段的全部 length-delimited 值（repeated 字段用）。
+fn pb_all<'a>(bytes: &'a [u8], want: u32) -> Vec<&'a [u8]> {
+    let mut found = Vec::new();
+    let mut proto = Proto { bytes, at: 0 };
+    while let Some((field, value)) = proto.next() {
+        if field == want
+            && let Field::Bytes(slice) = value
+        {
+            found.push(slice);
+        }
+    }
+    found
+}
+
+/// 标准表 base64（含 `+/=`），够解 B 站给的那串了。
+fn base64_decode(text: &str) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(text.len() / 4 * 3);
+    let (mut buffer, mut bits) = (0u32, 0u32);
+    for byte in text.bytes() {
+        let value = match byte {
+            b'A'..=b'Z' => byte - b'A',
+            b'a'..=b'z' => byte - b'a' + 26,
+            b'0'..=b'9' => byte - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            b'=' | b'\n' | b'\r' => continue,
+            _ => return None,
+        } as u32;
+        buffer = (buffer << 6) | value;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buffer >> bits) as u8);
+        }
+    }
+    Some(out)
+}
+
 /// 上舰（`GUARD_BUY`）：键名照 blivedm 的 GuardBuyMessage——注意是 `username`，
 /// 不是别处的 `uname`；这条消息里没有头像。
 fn parse_guard(data: &serde_json::Value) -> Guard {
@@ -676,6 +809,78 @@ fn parse_interact(data: &serde_json::Value) -> Interact {
 
 #[cfg(test)]
 mod emote_tests {
+    #[test]
+    fn gift_v2_decodes_protobuf() {
+        fn varint(mut n: u64, out: &mut Vec<u8>) {
+            while n >= 0x80 {
+                out.push((n as u8) | 0x80);
+                n >>= 7;
+            }
+            out.push(n as u8);
+        }
+        fn field_str(no: u64, text: &str, out: &mut Vec<u8>) {
+            varint(no << 3 | 2, out);
+            varint(text.len() as u64, out);
+            out.extend_from_slice(text.as_bytes());
+        }
+        fn field_num(no: u64, value: u64, out: &mut Vec<u8>) {
+            varint(no << 3, out);
+            varint(value, out);
+        }
+        fn field_msg(no: u64, body: &[u8], out: &mut Vec<u8>) {
+            varint(no << 3 | 2, out);
+            varint(body.len() as u64, out);
+            out.extend_from_slice(body);
+        }
+        // SendGiftV2GiftMaterialSnapShot{img_basic=1}
+        let mut info = Vec::new();
+        field_str(1, "https://s1.hdslb.com/bfs/live/abc.png", &mut info);
+        // SendGiftV2GiftItem
+        let mut item = Vec::new();
+        field_num(1, 1, &mut item);
+        field_str(2, "辣条", &mut item);
+        field_num(3, 3, &mut item);
+        field_num(5, 100, &mut item);
+        field_str(8, "silver", &mut item);
+        field_str(18, "赠送", &mut item);
+        field_msg(35, &info, &mut item);
+        // SendGiftBroadcast
+        let mut broadcast = Vec::new();
+        field_num(1, 9202840, &mut broadcast);
+        field_str(2, "某位观众", &mut broadcast);
+        field_str(3, "https://i1.hdslb.com/bfs/face/abc.jpg", &mut broadcast);
+        field_msg(10, &item, &mut broadcast);
+        // 手搓 base64（标准表）
+        let table = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut encoded = String::new();
+        for chunk in broadcast.chunks(3) {
+            let mut buffer = 0u32;
+            for (index, byte) in chunk.iter().enumerate() {
+                buffer |= u32::from(*byte) << (16 - index * 8);
+            }
+            for slot in 0..4 {
+                if slot <= chunk.len() {
+                    encoded.push(table[((buffer >> (18 - slot * 6)) & 0x3f) as usize] as char);
+                } else {
+                    encoded.push('=');
+                }
+            }
+        }
+        let data = serde_json::json!({ "pb": encoded });
+        let gift = parse_gift_v2(&data).expect("V2 礼物要能解出来");
+        assert_eq!(gift.uname, "某位观众");
+        assert_eq!(gift.uid, 9202840);
+        assert_eq!(gift.gift_name, "辣条");
+        assert_eq!(gift.num, 3);
+        assert_eq!(gift.gift_id, 1);
+        assert_eq!(gift.action.as_deref(), Some("赠送"));
+        assert_eq!(
+            gift.img.as_deref(),
+            Some("https://s1.hdslb.com/bfs/live/abc.png")
+        );
+        assert!(gift.face.is_some());
+    }
+
     #[test]
     fn guard_buy_uses_username_key() {
         // 照 blivedm 的 GuardBuyMessage.from_command 抄的键名

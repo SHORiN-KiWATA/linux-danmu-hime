@@ -22,7 +22,7 @@ DEFAULTS: dict[str, object] = {
     "anchor": "bottom-right",
     "width": 381,
     "height": 560,
-    "margin": 20,
+    "margin": 10,
     "offset_x": -20,
     "offset_y": 456,
     "font_size": 28.0,

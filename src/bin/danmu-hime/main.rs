@@ -157,7 +157,7 @@ fn usage() -> &'static str {
 选项:
   --width <像素>        浮层宽（默认 381，暗色底板铺满这个宽度）
   --height <像素>       高度上限（默认 560），装不下的老弹幕就不画了
-  --margin <像素>       距屏幕边缘（默认 20）
+  --margin <像素>       距屏幕边缘（默认 10）
   --anchor <位置>       bottom-right|bottom-left|top-right|…（默认 bottom-right）
   --font-size <像素>    字号（默认 28，是 em 尺寸：汉字实际约占九成）
   --zoom <倍数>         字和行距一起放大（默认 1.0；跟 --scale 的设备像素比无关）
@@ -385,7 +385,7 @@ impl Default for Args {
             cookie: None,
             width: 381,
             height: 560,
-            margin: 20,
+            margin: 10,
             offset_x: -20,
             offset_y: 456,
             anchor: Anchor::BOTTOM | Anchor::RIGHT,

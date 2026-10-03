@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # 打「预编译包」的 tarball 并发 GitHub release。
-# 用法：packaging/build-release.sh 0.1.4 0.1.3
+# 用法：packaging/build-release.sh 0.1.5 0.1.4
 #       参数1=新版本号  参数2=上一个版本号（拿它的文件树当底子）
+#       两个参数一样 = 同版本重打包（改个默认值、重发产物这种），这时不会动 Cargo.toml
 set -euo pipefail
 new=${1:?新版本号}; old=${2:?上一个版本号}
 cd "$(dirname "$0")/.."
@@ -9,7 +10,7 @@ sed -i "s/^version = \"$old\"/version = \"$new\"/" Cargo.toml
 cargo build --release --offline --bin danmu-hime
 work=$(mktemp -d)
 tar xzf "packaging/danmu-hime-$old-x86_64.tar.gz" -C "$work"
-mv "$work/danmu-hime-$old" "$work/danmu-hime-$new"
+[ "$old" = "$new" ] || mv "$work/danmu-hime-$old" "$work/danmu-hime-$new"
 stage="$work/danmu-hime-$new"
 install -Dm0755 target/release/danmu-hime "$stage/usr/bin/danmu-hime"
 strip --strip-all "$stage/usr/bin/danmu-hime"

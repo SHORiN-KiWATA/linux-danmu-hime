@@ -57,7 +57,7 @@ pub struct Theme {
 impl Default for Theme {
     fn default() -> Self {
         Self {
-            font_size: 30.0,
+            font_size: 28.0,
             panel_alpha: 0.6,
             name_color: (255, 229, 138),
             text_color: (255, 255, 255),

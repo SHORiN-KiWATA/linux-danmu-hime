@@ -940,6 +940,9 @@ fn decode_image_full(bytes: &[u8]) -> Option<png::Image> {
     if let Ok(image) = png::decode(bytes) {
         return Some(image);
     }
+    if let Some(image) = decode_webp(bytes) {
+        return Some(image);
+    }
     let mut decoder = jpeg_decoder::Decoder::new(bytes);
     let pixels = decoder.decode().ok()?;
     let info = decoder.info()?;
@@ -960,6 +963,38 @@ fn decode_image_full(bytes: &[u8]) -> Option<png::Image> {
     Some(png::Image {
         width: info.width as u32,
         height: info.height as u32,
+        rgba,
+    })
+}
+
+/// WebP：B 站偶尔给的是 WebP（头像里不少见）。只认 PNG/JPEG 的话，
+/// 这些图会「下到了但画不出来」，屏幕上永远空一块，而且还不报错。
+fn decode_webp(bytes: &[u8]) -> Option<png::Image> {
+    // 先看魔数：不是 WebP 就别让解码器白试一遍
+    if bytes.len() < 12 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WEBP" {
+        return None;
+    }
+    let mut decoder = image_webp::WebPDecoder::new(std::io::Cursor::new(bytes)).ok()?;
+    let (width, height) = decoder.dimensions();
+    if width == 0 || height == 0 {
+        return None;
+    }
+    let has_alpha = decoder.has_alpha();
+    let mut buf = vec![0u8; decoder.output_buffer_size()?];
+    decoder.read_image(&mut buf).ok()?;
+    // 没有 alpha 通道时给的是 RGB24，补齐成 RGBA
+    let rgba = if has_alpha {
+        buf
+    } else {
+        let mut out = Vec::with_capacity(width as usize * height as usize * 4);
+        for chunk in buf.chunks_exact(3) {
+            out.extend_from_slice(&[chunk[0], chunk[1], chunk[2], 255]);
+        }
+        out
+    };
+    Some(png::Image {
+        width,
+        height,
         rgba,
     })
 }
@@ -1198,24 +1233,58 @@ mod tests {
         assert!((100..=155).contains(&a), "alpha 该是半透明，实际 {a}");
     }
 
+    /// WebP 也要认：B 站偶尔给 WebP，认不出来就是永远空一块。
+    #[test]
+    fn webp_decodes_with_and_without_alpha() {
+        // 4x4 无损 WebP（拿 PIL 生成的），一张带 alpha、一张纯 RGB
+        const WEBP_ALPHA: &[u8] = &[
+            0x52, 0x49, 0x46, 0x46, 0x1c, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50,
+            0x38, 0x4c, 0x0f, 0x00, 0x00, 0x00, 0x2f, 0x03, 0xc0, 0x00, 0x10, 0x07, 0x10, 0xfd,
+            0x8f, 0x02, 0x06, 0x22, 0xa2, 0xff, 0x01, 0x00,
+        ];
+        const WEBP_RGB: &[u8] = &[
+            0x52, 0x49, 0x46, 0x46, 0x1c, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50,
+            0x38, 0x4c, 0x10, 0x00, 0x00, 0x00, 0x2f, 0x03, 0xc0, 0x00, 0x00, 0x07, 0x50, 0xc0,
+            0xe8, 0x7f, 0xff, 0x03, 0x11, 0xd1, 0xff, 0x00,
+        ];
+        let with_alpha = decode_image(WEBP_ALPHA, 0).expect("带 alpha 的 WebP 要能解");
+        assert_eq!((with_alpha.width, with_alpha.height), (4, 4));
+        assert_eq!(&with_alpha.rgba[0..4], &[255, 0, 0, 128], "半透明的红");
+        let no_alpha = decode_image(WEBP_RGB, 0).expect("纯 RGB 的 WebP 也要能解");
+        assert_eq!((no_alpha.width, no_alpha.height), (4, 4));
+        assert_eq!(&no_alpha.rgba[0..4], &[0, 128, 255, 255], "不透明的蓝");
+        assert!(
+            decode_image(b"RIFF\x00\x00\x00\x00WEBPjunk", 0).is_none(),
+            "坏数据不能崩，认不出来就当没有"
+        );
+    }
+
     /// 量一下现成缓存里的图「按显示尺寸缩」能省多少：
     /// `cargo test --release image_memory_savings -- --ignored --nocapture`
     #[test]
     #[ignore = "手动跑的测量，读 ~/.cache/danmu-hime"]
     fn image_memory_savings() {
-        let Some(home) = std::env::var_os("HOME") else {
-            return;
+        // 默认量缓存目录；想量别的目录（比如自己备的测试图）用环境变量指过去
+        let dir = match std::env::var_os("DANMU_HIME_IMG_DIR") {
+            Some(path) => std::path::PathBuf::from(path),
+            None => {
+                let Some(home) = std::env::var_os("HOME") else {
+                    return;
+                };
+                std::path::Path::new(&home).join(".cache/danmu-hime/emotes")
+            }
         };
-        let dir = std::path::Path::new(&home).join(".cache/danmu-hime/emotes");
         let Ok(entries) = std::fs::read_dir(&dir) else {
             return;
         };
         let (mut before, mut after, mut count) = (0usize, 0usize, 0usize);
+        let mut failed = Vec::new();
         for entry in entries.flatten() {
             let Ok(bytes) = std::fs::read(entry.path()) else {
                 continue;
             };
             let Some(full) = decode_image(&bytes, 0) else {
+                failed.push(entry.file_name().to_string_lossy().into_owned());
                 continue;
             };
             let Some(small) = decode_image(&bytes, 67) else {
@@ -1230,6 +1299,9 @@ mod tests {
             before as f32 / 1048576.0,
             after as f32 / 1048576.0
         );
+        if !failed.is_empty() {
+            println!("[图片] 解不开的 {} 张：{}", failed.len(), failed.join(", "));
+        }
     }
 
     fn line(text: &str) -> DrawLine {

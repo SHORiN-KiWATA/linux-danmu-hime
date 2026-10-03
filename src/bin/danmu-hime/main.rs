@@ -935,6 +935,10 @@ impl Overlay {
                 };
                 if loaded {
                     self.dirty = true;
+                } else {
+                    // 解不开（格式不认之类）：别把「下过」一直记着，不然这个字符
+                    // 以后就永远空着了。忘掉之后下次再见到会重新下。
+                    forget_emote(ch);
                 }
                 return;
             }
@@ -1797,7 +1801,11 @@ fn ensure_emote(tx: &Sender<UiEvent>, ch: char, url: &str) {
                     bytes: std::sync::Arc::new(bytes),
                 });
             }
-            Err(error) => eprintln!("# 表情图下载失败：{error}"),
+            Err(error) => {
+                eprintln!("# 表情图下载失败：{error}");
+                // 下载失败也别忘了撤记录，不然这个字符永久空白
+                forget_emote(ch);
+            }
         }
     });
 }
@@ -2309,6 +2317,18 @@ mod emote_tests {
         assert_eq!(expand_emotes_with("好耶[dog]", Some(&emote)), "好耶\u{1F436}");
         // 不是这条弹幕带的那个 token 就原样留着
         assert_eq!(expand_emotes_with("好耶[别]表情]", Some(&emote)), "好耶[别]表情]");
+    }
+
+    #[test]
+    fn a_failed_emote_can_be_tried_again() {
+        let ch = '\u{E0FF}';
+        seen_emotes().lock().expect("没被毒").insert(ch);
+        assert!(seen_emotes().lock().expect("没被毒").contains(&ch));
+        forget_emote(ch);
+        assert!(
+            !seen_emotes().lock().expect("没被毒").contains(&ch),
+            "撤了「下过」的记录，下次才重下"
+        );
     }
 
     #[test]

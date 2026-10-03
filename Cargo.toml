@@ -16,6 +16,8 @@ path = "src/bin/danmaku-dump.rs"
 ab_glyph = "0.2.32"
 # 头像那边 B 站给的是 JPEG（表情和礼物图是 PNG），两种都得认
 jpeg-decoder = "0.3"
+# 偶尔还会给到 WebP（头像里不少见），认不出来就是永远空一块。纯 Rust，没有 C 依赖
+image-webp = "0.2"
 anyhow = "1.0.104"
 chrono = "0.4.45"
 flate2 = "1.1.10"

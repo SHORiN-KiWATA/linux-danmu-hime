@@ -141,6 +141,10 @@ impl Args {
                 "#{:02x}{:02x}{:02x}",
                 self.theme.panel_rgb.0, self.theme.panel_rgb.1, self.theme.panel_rgb.2
             )),
+            gift_color: Some(format!(
+                "#{:02x}{:02x}{:02x}",
+                self.theme.gift_color.0, self.theme.gift_color.1, self.theme.gift_color.2
+            )),
             scale: self.scale,
             zoom: Some(self.zoom),
         }
@@ -155,7 +159,7 @@ fn usage() -> &'static str {
   --height <像素>       高度上限（默认 560），装不下的老弹幕就不画了
   --margin <像素>       距屏幕边缘（默认 20）
   --anchor <位置>       bottom-right|bottom-left|top-right|…（默认 bottom-right）
-  --font-size <像素>    字号（默认 30，是 em 尺寸：汉字实际约占九成）
+  --font-size <像素>    字号（默认 28，是 em 尺寸：汉字实际约占九成）
   --zoom <倍数>         字和行距一起放大（默认 1.0；跟 --scale 的设备像素比无关）
   --line-gap <像素>     两行之间的空隙（默认 4；底板上仍然是连着的）
   --opacity <0-1>       暗色底板的不透明度（默认 0.6，0 = 只有字没底）
@@ -258,10 +262,12 @@ struct FileConfig {
     zoom: Option<f32>,
     /// 要不要画粉丝牌子；不写就是画。
     medal: Option<bool>,
-    /// 昵称 / 正文 / 底板的颜色，`#rrggbb`。
+    /// 昵称 / 正文 / 底板 / 礼物名的颜色，`#rrggbb`。
     name_color: Option<String>,
     text_color: Option<String>,
     panel_color: Option<String>,
+    /// 礼物行里「星星之火 ×1」那一截的颜色，默认粉一点（#ffaad2）。
+    gift_color: Option<String>,
 
     /// 要不要画礼物；不写就是画。
     gift: Option<bool>,
@@ -355,6 +361,9 @@ impl FileConfig {
         }
         if let Some(color) = &self.panel_color {
             args.theme.panel_rgb = parse_color(color, "panel_color")?;
+        }
+        if let Some(color) = &self.gift_color {
+            args.theme.gift_color = parse_color(color, "gift_color")?;
         }
         if let Some(medal) = self.medal {
             args.medal = medal;
@@ -487,6 +496,9 @@ fn parse_args() -> Result<Args> {
             }
             "--panel-color" => {
                 args.theme.panel_rgb = parse_color(&value("--panel-color")?, "--panel-color")?
+            }
+            "--gift-color" => {
+                args.theme.gift_color = parse_color(&value("--gift-color")?, "--gift-color")?
             }
             "--emoji-font" => args.emoji_font = Some(value("--emoji-font")?),
             "--scale" => {
@@ -761,8 +773,12 @@ fn main() -> Result<()> {
 }
 
 enum UiEvent {
-    /// 一条弹幕，拆成「前缀（昵称/粉丝牌）」和正文。
-    Danmaku { prefix: String, text: String },
+    /// 一条弹幕，拆成「前缀（昵称/粉丝牌）」和正文；kind 决定正文用什么颜色。
+    Danmaku {
+        kind: Kind,
+        prefix: String,
+        text: String,
+    },
     /// 连不上之类的问题，也用一条会淡出的提示表示一下。
     Notice(String),
     /// 后台下好的表情原图（主线程负责交给渲染器）。
@@ -900,7 +916,7 @@ impl Overlay {
 
     fn on_ui_event(&mut self, message: UiEvent) {
         let (kind, prefix, text) = match message {
-            UiEvent::Danmaku { prefix, text } => (Kind::Danmaku, prefix, text),
+            UiEvent::Danmaku { kind, prefix, text } => (kind, prefix, text),
             UiEvent::Notice(text) => (Kind::System, String::new(), text),
             UiEvent::Emote { ch, bytes } => {
                 // 图到了：挂到渲染器上，之后这个字符一律贴真图。
@@ -1044,6 +1060,9 @@ impl Overlay {
         if let Some(color) = config.panel_color.as_deref().and_then(|c| parse_color(c, "panel_color").ok()) {
             self.renderer.theme.panel_rgb = color;
         }
+        if let Some(color) = config.gift_color.as_deref().and_then(|c| parse_color(c, "gift_color").ok()) {
+            self.renderer.theme.gift_color = color;
+        }
         if let Some(ttl) = config.ttl
             && ttl > 0.0
         {
@@ -1128,6 +1147,7 @@ impl Overlay {
                 return;
             };
             let _ = tx.send(UiEvent::Danmaku {
+                kind: Kind::Danmaku,
                 prefix: "弹幕姬报告: ".to_string(),
                 text: line,
             });
@@ -1395,7 +1415,7 @@ fn spawn_danmaku(room_id: i64, cookies: Cookies, tx: Sender<UiEvent>) {
                             ensure_gift_icon(&tx, gift);
                         }
                         match to_line(event) {
-                            Some((prefix, text)) => UiEvent::Danmaku { prefix, text },
+                            Some((kind, prefix, text)) => UiEvent::Danmaku { kind, prefix, text },
                             None => continue,
                         }
                     }
@@ -1795,7 +1815,8 @@ fn expand_emotes_with(text: &str, emote: Option<&danmu_hime::protocol::Emote>) -
 }
 
 /// 挑我们要画的：弹幕、礼物、醒目留言都成一行；其它事件先不画。
-fn to_line(event: DanmakuEvent) -> Option<(String, String)> {
+/// 返回的 `Kind` 决定这一行正文用什么颜色（礼物行用礼物色）。
+fn to_line(event: DanmakuEvent) -> Option<(Kind, String, String)> {
     match &event {
         DanmakuEvent::Danmaku(danmaku) => danmaku_line(danmaku).map(|(prefix, text)| {
             // 「回复 @某某」：名字不在正文里；挂到前缀（昵称那一侧）去，
@@ -1806,8 +1827,8 @@ fn to_line(event: DanmakuEvent) -> Option<(String, String)> {
             };
             // 头像当占位字符挂在前缀最前面，图下好之后渲染器会顶上去
             match avatar_char(danmaku) {
-                Some(ch) => (format!("{ch}{prefix}"), text),
-                None => (prefix, text),
+                Some(ch) => (Kind::Danmaku, format!("{ch}{prefix}"), text),
+                None => (Kind::Danmaku, prefix, text),
             }
         }),
         DanmakuEvent::Gift(gift) => {
@@ -1815,10 +1836,11 @@ fn to_line(event: DanmakuEvent) -> Option<(String, String)> {
                 return None;
             }
             // 「[礼物]」不要了：头像 + 昵称 + 动作 放前缀（昵称色），
-            // 礼物名 ×N 放正文（礼物色，见 Theme::text_color_for）
+            // 礼物名 ×N 放正文（Kind::Gift → 礼物色 gift_color）
             let icon = gift_icon(gift).map(|(ch, _)| ch);
             let action = gift.action.clone().unwrap_or_else(|| String::from("赠送"));
             Some((
+                Kind::Gift,
                 format!(
                     "{}{} {action} ",
                     icon.map(String::from).unwrap_or_default(),
@@ -1831,12 +1853,15 @@ fn to_line(event: DanmakuEvent) -> Option<(String, String)> {
             if !SHOW_GIFT.load(Ordering::Relaxed) {
                 return None;
             }
+            // 上舰也是礼物类：舰长 ×1 用礼物色
             Some((
+                Kind::Gift,
                 format!("[上舰] {} ", guard.uname),
                 format!("{} ×{}", guard.gift_name, guard.num.max(1)),
             ))
         }
         DanmakuEvent::SuperChat(sc) => Some((
+            Kind::Danmaku,
             format!("[SC ¥{}] {}: ", sc.price, sc.uname),
             sc.text.clone(),
         )),

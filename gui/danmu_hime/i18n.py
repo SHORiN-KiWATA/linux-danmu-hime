@@ -46,6 +46,7 @@ _ZH = {
     "Colors": "配色",
     "Name color": "昵称颜色",
     "Text color": "正文颜色",
+    "Gift color": "礼物颜色",
     "Panel color": "底板颜色",
     "Logged in as {name}": "已登录：{name}",
     "Show medal hint": "就是每条前面那个 [牌子名 · 等级]",

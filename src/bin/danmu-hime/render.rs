@@ -16,10 +16,13 @@ use tiny_skia::{Color, Paint, Pixmap, Rect, Shader, Transform};
 
 use crate::png;
 
-/// 行类型：现在只有弹幕和出错提示（礼物、醒目留言以后再加）。
+/// 行类型：决定这一行的前缀/正文各自用什么颜色
+/// （见 `Theme::prefix_color` / `Theme::text_color`）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     Danmaku,
+    /// 礼物 / 上舰：昵称照旧，正文（「星星之火 ×1」）用礼物色。
+    Gift,
     System,
 }
 
@@ -489,7 +492,7 @@ impl Theme {
     /// 昵称/牌子那一截的颜色。改主题就是改这里。
     fn prefix_color(&self, kind: Kind) -> (u8, u8, u8) {
         match kind {
-            Kind::Danmaku => self.name_color,
+            Kind::Danmaku | Kind::Gift => self.name_color,
             Kind::System => (120, 220, 180),
         }
     }
@@ -498,6 +501,7 @@ impl Theme {
     fn text_color(&self, kind: Kind) -> (u8, u8, u8) {
         match kind {
             Kind::Danmaku => self.text_color,
+            Kind::Gift => self.gift_color,
             Kind::System => (190, 245, 215),
         }
     }
@@ -973,6 +977,34 @@ mod tests {
             enter: 1.0,
             collapse: 1.0,
         }
+    }
+
+    /// 礼物行的正文要单独一个颜色（「星星之火 ×1」用 gift_color）。
+    #[test]
+    fn gift_line_paints_in_gift_color() {
+        let magenta = (255, 0, 255); // 洋红，正文里不可能自带
+        let painted = |kind: Kind| {
+            let mut renderer = renderer();
+            renderer.theme.gift_color = magenta;
+            let row = DrawLine {
+                kind,
+                ..line("星星之火 ×1")
+            };
+            let pixels = renderer.render(320, 120, &[row], 0.0);
+            pixels
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .filter(|px| px[3] > 200 && px[0] > 200 && px[2] > 200 && px[1] < 80)
+                .count()
+        };
+        let gift = painted(Kind::Gift);
+        assert!(gift > 30, "礼物行正文应该是礼物色，只数到 {gift} 个像素");
+        assert_eq!(
+            painted(Kind::Danmaku),
+            0,
+            "同一条当普通弹幕画时不该出现礼物色"
+        );
     }
 
     #[test]

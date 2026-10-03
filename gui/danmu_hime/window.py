@@ -24,11 +24,14 @@ from .i18n import _  # noqa: E402
 SAVE_DELAY_MS = 400
 
 # 预览里用的示例弹幕（尽量跟真实的样子像：昵称 + 内容，带 emoji、带长句）
+# 预览里的样本：kind 跟浮层那边的 Kind 对应，gift 行正文用礼物色
 SAMPLES = [
-    ("晴晴了", "近亲走过去吃大"),
-    ("[瑞乃酱·6]", "这条全是 emoji：😀😂🔥✨🎉💯"),
-    ("毒树之果", "下路让你轮上了，中文随便断但英文 words must not be split"),
+    ("danmaku", "晴晴了", "近亲走过去吃大"),
+    ("danmaku", "[瑞乃酱·6]", "这条全是 emoji：😀😂🔥✨🎉💯"),
+    ("danmaku", "毒树之果", "下路让你轮上了，中文随便断但英文 words must not be split"),
 ]
+# 礼物行：前缀是「昵称 动作」，正文是「礼物名 ×N」
+GIFT_SAMPLE = ("gift", "xiaop668 投喂", "星星之火 ×1")
 
 ANCHORS = [
     ("top-left", "↖"),
@@ -126,6 +129,7 @@ class PanelPreview(Gtk.DrawingArea):
         panel_rgb = _rgb(values.get("panel_color") or config.DEFAULTS["panel_color"])
         name_rgb = _rgb(values.get("name_color") or config.DEFAULTS["name_color"])
         text_rgb = _rgb(values.get("text_color") or config.DEFAULTS["text_color"])
+        gift_rgb = _rgb(values.get("gift_color") or config.DEFAULTS["gift_color"])
 
         cr.set_source_rgb(0.10, 0.11, 0.13)
         cr.paint()
@@ -144,7 +148,7 @@ class PanelPreview(Gtk.DrawingArea):
         # 排一遍：最新的贴底，往上一行一行码（跟浮层一样）
         rows = []
         used = pad_y * 2
-        for name, text in reversed(SAMPLES):
+        for kind, name, text in reversed(SAMPLES + [GIFT_SAMPLE]):
             prefix = self.create_pango_layout(f"{name}: ")
             prefix.set_font_description(desc)
             prefix_width = prefix.get_pixel_size()[0]
@@ -154,7 +158,7 @@ class PanelPreview(Gtk.DrawingArea):
             body.set_width(int(max(size, inner - prefix_width)) * Pango.SCALE)
             body.set_spacing(int(gap_px * Pango.SCALE))
             body_height = body.get_pixel_size()[1]
-            rows.append((prefix, prefix_width, body, body_height))
+            rows.append((kind, prefix, prefix_width, body, body_height))
             used += body_height + gap_px
         used -= gap_px
         panel_height = max(size, used)
@@ -174,11 +178,13 @@ class PanelPreview(Gtk.DrawingArea):
         cr.rectangle(left, top, panel_width * scale, panel_height)
         cr.clip()
         y = top + pad_y
-        for prefix, prefix_width, body, body_height in rows:
+        for kind, prefix, prefix_width, body, body_height in rows:
+            # 礼物行的昵称也是昵称色，只有正文换成礼物色（和浮层一致）
             cr.set_source_rgba(name_rgb[0], name_rgb[1], name_rgb[2], 1.0)
             cr.move_to(left + pad_x, y)
             PangoCairo.show_layout(cr, prefix)
-            cr.set_source_rgba(text_rgb[0], text_rgb[1], text_rgb[2], 1.0)
+            body_rgb = gift_rgb if kind == "gift" else text_rgb
+            cr.set_source_rgba(body_rgb[0], body_rgb[1], body_rgb[2], 1.0)
             cr.move_to(left + pad_x + prefix_width, y)
             PangoCairo.show_layout(cr, body)
             y += body_height + gap_px
@@ -692,6 +698,7 @@ class ConfigWindow(Adw.ApplicationWindow):
         self._color_buttons: dict[str, Gtk.ColorDialogButton] = {}
         self._color_row(color_group, "name_color", _("Name color"))
         self._color_row(color_group, "text_color", _("Text color"))
+        self._color_row(color_group, "gift_color", _("Gift color"))
         self._color_row(color_group, "panel_color", _("Panel color"))
         page.add(color_group)
 

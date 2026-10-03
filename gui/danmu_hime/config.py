@@ -41,6 +41,7 @@ DEFAULTS: dict[str, object] = {
     "avatar_round": True,
     "name_color": "#ffe58a",
     "text_color": "#ffffff",
+    "gift_color": "#ffaad2",
     "panel_color": "#000000",
     "scale": None,
     "zoom": 1.0,

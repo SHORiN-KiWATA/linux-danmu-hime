@@ -89,12 +89,6 @@ async fn run() -> Result<()> {
 
     while let Some(event) = rx.recv().await {
         match event {
-            DanmakuEvent::Guard(guard) => {
-                println!(
-                    "[上舰] {} {} ×{} (level={} price={})",
-                    guard.uname, guard.gift_name, guard.num, guard.level, guard.price
-                );
-            }
             ClientEvent::Connecting { attempt } => {
                 eprintln!(
                     "# 连接中{}…",
@@ -172,6 +166,10 @@ fn render(event: &DanmakuEvent, all: bool) -> Option<String> {
         DanmakuEvent::SuperChat(s) => {
             format!("[{time}] ☆ 醒目留言 ¥{} {}：{}", s.price, s.uname, s.text)
         }
+        DanmakuEvent::Guard(g) => format!(
+            "[{time}] ★ {} 上舰 {} ×{}（{} 电池）",
+            g.uname, g.gift_name, g.num, g.price
+        ),
         DanmakuEvent::Interact(i) => format!("[{time}] · {} {}", i.uname, i.action_text()),
         DanmakuEvent::Like { uname, text } => format!("[{time}] · {uname} {text}"),
         DanmakuEvent::Watched { num, .. } => format!("[{time}] · 看过 {num}"),

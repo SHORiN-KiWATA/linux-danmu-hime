@@ -120,7 +120,8 @@ class PanelPreview(Gtk.DrawingArea):
         values = self.window.values
         zoom = float(values.get("zoom") or 1.0)
         font_size = max(6.0, float(values["font_size"]) * zoom)
-        gap = float(values["line_gap"]) * zoom
+        # 预览里一行一条消息，所以间距看 row_gap（消息之间），不是 line_gap
+        gap = float(values.get("row_gap", 10.0)) * zoom
         opacity = max(0.0, min(1.0, float(values["opacity"])))
         panel_rgb = _rgb(values.get("panel_color") or config.DEFAULTS["panel_color"])
         name_rgb = _rgb(values.get("name_color") or config.DEFAULTS["name_color"])

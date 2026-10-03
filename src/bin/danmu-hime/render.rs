@@ -292,6 +292,8 @@ impl Renderer {
     ///
     /// `scroll` 是整体往下的位移（设备像素）：新弹幕进来时整摞先被压下去一点，
     /// 再随时间回到 0，看起来就是「被顶上去」的过渡，而不是瞬移。
+    /// 只有测试直接调它；画屏走 [`Renderer::render_into`]（复用缓冲区）。
+    #[cfg(test)]
     pub fn render(&self, width: u32, height: u32, lines: &[DrawLine], scroll: f32) -> Vec<u8> {
         let mut pixels = vec![0; (width * height * 4) as usize];
         self.render_into(&mut pixels, width, height, lines, scroll);

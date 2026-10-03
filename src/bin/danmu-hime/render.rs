@@ -149,7 +149,7 @@ impl Renderer {
     /// 收下一张 B 站表情原图，挂到占位字符上（`[dog]` → 字体里那个 🐶）。
     /// 返回 false 说明这张图解不开（不是 png 之类），跳过就行。
     pub fn load_emote(&self, ch: char, bytes: &[u8]) -> bool {
-        let Some(image) = decode_image(bytes) else {
+        let Some(image) = decode_image(bytes, self.image_cap()) else {
             return false;
         };
         if image.width == 0 || image.height == 0 {
@@ -165,7 +165,7 @@ impl Renderer {
 
     /// 头像：和表情走同一条路（占位字符 → 原图顶替），只是画之前裁成圆的。
     pub fn load_avatar(&self, ch: char, bytes: &[u8]) -> bool {
-        let Some(mut image) = decode_image(bytes) else {
+        let Some(mut image) = decode_image(bytes, self.image_cap()) else {
             return false;
         };
         if image.width == 0 || image.height == 0 {
@@ -177,6 +177,12 @@ impl Renderer {
             .borrow_mut()
             .retain(|(cached, _), _| *cached != ch);
         true
+    }
+
+    /// 下载的图存多大：实际画出来只有 `1.2 × 字号` 像素，留两倍边长就够。
+    /// B 站的头像 / 礼物图经常是 1000×1000 以上，原尺寸存着解码后一张就 4～8 MB。
+    fn image_cap(&self) -> u32 {
+        ((self.theme.font_size * 1.2 * 2.0).round() as u32).clamp(48, 512)
     }
 
     /// 收下解码好的图，顺手把最旧的挤出上限之外
@@ -849,7 +855,59 @@ fn blend(pixmap: &mut Pixmap, x: i32, y: i32, rgb: (u8, u8, u8), alpha: f32) {
 }
 
 /// 解一张图：表情和礼物图是 PNG，B 站头像是 JPEG，两种都得认。
-fn decode_image(bytes: &[u8]) -> Option<png::Image> {
+/// `cap` 是最长边上限（像素）——解码完顺手缩到这个尺寸以内，
+/// 免得一张 1440×1440 的礼物图在内存里占 8 MB（而实际只画到几十像素）。
+fn decode_image(bytes: &[u8], cap: u32) -> Option<png::Image> {
+    Some(shrink_to_fit(decode_image_full(bytes)?, cap))
+}
+
+/// 按最长边 `cap` 用盒式平均缩图。按 alpha 加权再还原，
+/// 直接平均的话透明像素会把边缘拉出黑边。
+fn shrink_to_fit(image: png::Image, cap: u32) -> png::Image {
+    let (w, h) = (image.width, image.height);
+    let longest = w.max(h);
+    if cap == 0 || longest <= cap || w == 0 || h == 0 {
+        return image;
+    }
+    let scale = cap as f32 / longest as f32;
+    let nw = ((w as f32 * scale).round() as u32).max(1);
+    let nh = ((h as f32 * scale).round() as u32).max(1);
+    let mut rgba = vec![0u8; (nw * nh * 4) as usize];
+    for y in 0..nh {
+        let sy0 = (y as u64 * h as u64 / nh as u64) as u32;
+        let sy1 = (((y + 1) as u64 * h as u64).div_ceil(nh as u64) as u32).max(sy0 + 1);
+        for x in 0..nw {
+            let sx0 = (x as u64 * w as u64 / nw as u64) as u32;
+            let sx1 = (((x + 1) as u64 * w as u64).div_ceil(nw as u64) as u32).max(sx0 + 1);
+            let (mut sr, mut sg, mut sb, mut sa, mut n) = (0u32, 0u32, 0u32, 0u32, 0u32);
+            for sy in sy0..sy1.min(h) {
+                for sx in sx0..sx1.min(w) {
+                    let i = ((sy * w + sx) * 4) as usize;
+                    let alpha = image.rgba[i + 3] as u32;
+                    sr += image.rgba[i] as u32 * alpha;
+                    sg += image.rgba[i + 1] as u32 * alpha;
+                    sb += image.rgba[i + 2] as u32 * alpha;
+                    sa += alpha;
+                    n += 1;
+                }
+            }
+            let o = ((y * nw + x) * 4) as usize;
+            if sa > 0 {
+                rgba[o] = (sr / sa) as u8;
+                rgba[o + 1] = (sg / sa) as u8;
+                rgba[o + 2] = (sb / sa) as u8;
+            }
+            rgba[o + 3] = (sa / n.max(1)) as u8;
+        }
+    }
+    png::Image {
+        width: nw,
+        height: nh,
+        rgba,
+    }
+}
+
+fn decode_image_full(bytes: &[u8]) -> Option<png::Image> {
     if let Ok(image) = png::decode(bytes) {
         return Some(image);
     }
@@ -1070,6 +1128,67 @@ mod tests {
         assert!(
             renderer.emote_sources.borrow().contains_key(&ch_of(total - 1)),
             "最新的那张得留着"
+        );
+    }
+
+    #[test]
+    fn shrink_keeps_color_when_mixing_with_transparent() {
+        // 棋盘格：一半不透明红、一半全透明——每个目标像素的盒里两种都有
+        let mut rgba = Vec::with_capacity(16 * 4);
+        for y in 0..4 {
+            for x in 0..4 {
+                if (x + y) % 2 == 0 {
+                    rgba.extend_from_slice(&[255, 0, 0, 255]);
+                } else {
+                    rgba.extend_from_slice(&[0, 0, 0, 0]);
+                }
+            }
+        }
+        let small = shrink_to_fit(
+            png::Image {
+                width: 4,
+                height: 4,
+                rgba,
+            },
+            2,
+        );
+        assert_eq!((small.width, small.height), (2, 2));
+        let (r, g, b, a) = (small.rgba[0], small.rgba[1], small.rgba[2], small.rgba[3]);
+        assert_eq!((r, g, b), (255, 0, 0), "透明像素不该把颜色拉黑（现在是 {r},{g},{b}）");
+        assert!((100..=155).contains(&a), "alpha 该是半透明，实际 {a}");
+    }
+
+    /// 量一下现成缓存里的图「按显示尺寸缩」能省多少：
+    /// `cargo test --release image_memory_savings -- --ignored --nocapture`
+    #[test]
+    #[ignore = "手动跑的测量，读 ~/.cache/danmu-hime"]
+    fn image_memory_savings() {
+        let Some(home) = std::env::var_os("HOME") else {
+            return;
+        };
+        let dir = std::path::Path::new(&home).join(".cache/danmu-hime/emotes");
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            return;
+        };
+        let (mut before, mut after, mut count) = (0usize, 0usize, 0usize);
+        for entry in entries.flatten() {
+            let Ok(bytes) = std::fs::read(entry.path()) else {
+                continue;
+            };
+            let Some(full) = decode_image(&bytes, 0) else {
+                continue;
+            };
+            let Some(small) = decode_image(&bytes, 67) else {
+                continue;
+            };
+            before += full.rgba.len();
+            after += small.rgba.len();
+            count += 1;
+        }
+        println!(
+            "[图片] {count} 张：按原尺寸留着 {:.1} MB，缩到 67px 后 {:.1} MB",
+            before as f32 / 1048576.0,
+            after as f32 / 1048576.0
         );
     }
 

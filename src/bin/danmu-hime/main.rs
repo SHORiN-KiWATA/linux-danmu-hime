@@ -1798,6 +1798,11 @@ fn expand_emotes_with(text: &str, emote: Option<&danmu_hime::protocol::Emote>) -
 fn to_line(event: DanmakuEvent) -> Option<(String, String)> {
     match &event {
         DanmakuEvent::Danmaku(danmaku) => danmaku_line(danmaku).map(|(prefix, text)| {
+            // 「回复 @某某」：直播里艾特别人的名字不在正文里，挂到正文前面
+            let text = match &danmaku.reply_to {
+                Some(name) => format!("@{name} {text}"),
+                None => text,
+            };
             // 头像当占位字符挂在前缀最前面，图下好之后渲染器会顶上去
             match avatar_char(danmaku) {
                 Some(ch) => (format!("{ch}{prefix}"), text),

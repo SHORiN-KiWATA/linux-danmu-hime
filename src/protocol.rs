@@ -136,6 +136,8 @@ pub struct Danmaku {
     pub emote: Option<Emote>,
     /// 头像地址，在弹幕里就带着，不用另调接口。
     pub face: Option<String>,
+    /// 这条弹幕是「回复 @某某」——直播里的艾特，正文里没有 @，名字在 extra 里。
+    pub reply_to: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -384,6 +386,19 @@ fn parse_danmaku(payload: &serde_json::Value) -> Option<DanmakuEvent> {
         .filter(|face| !face.is_empty())
         .map(str::to_string);
 
+    // 直播的「艾特别人」：正文里没有 @，名字在 info[0] 某一格的 extra 里，
+    // 而 extra 本身又是一个 JSON 字符串，得再解一层。
+    let reply_to = meta.and_then(|meta| {
+        meta.iter().find_map(|slot| {
+            let extra = slot.get("extra").and_then(serde_json::Value::as_str)?;
+            let parsed: serde_json::Value = serde_json::from_str(extra).ok()?;
+            let name = parsed
+                .get("reply_uname")
+                .and_then(serde_json::Value::as_str)?;
+            (!name.is_empty()).then(|| name.to_string())
+        })
+    });
+
     let uid = user_arr
         .and_then(|a| a.first())
         .and_then(serde_json::Value::as_i64)
@@ -432,6 +447,7 @@ fn parse_danmaku(payload: &serde_json::Value) -> Option<DanmakuEvent> {
     let emote = meta.and_then(|m| parse_emote(m));
 
     Some(DanmakuEvent::Danmaku(Danmaku {
+            reply_to,
             face,
         text,
         uid,
@@ -809,6 +825,36 @@ fn parse_interact(data: &serde_json::Value) -> Interact {
 
 #[cfg(test)]
 mod emote_tests {
+    #[test]
+    fn mention_comes_from_extra() {
+        // 正文里没有 @，名字在 info[0][15].extra（一个 JSON 字符串）里
+        let payload = serde_json::json!({
+            "cmd": "DANMU_MSG",
+            "info": [
+                [
+                    0, 1, 25, 16777215, 0, 0, 0, "hash", 0, 0, 0, "", 0, "{}", "{}",
+                    {
+                        "extra": "{\"content\":\"你好啊\",\"reply_uname\":\"Black-Cat_-\",\"reply_uname_color\":\"#FB7299\"}",
+                        "mode": 0,
+                        "user": {
+                            "base": {"face": "https://i1.hdslb.com/bfs/face/abc.jpg", "name": "某人"},
+                            "uid": 9202840
+                        }
+                    },
+                    {"activity_identity": ""}, 0
+                ],
+                "你好啊",
+                [9202840, "某人", 0, 0, 0, 10000, 1, ""],
+                [], [], [], ["", ""], 0, 0, null, null, 0, 0, null, null, 0, 0, [17], null
+            ]
+        });
+        let Some(DanmakuEvent::Danmaku(danmaku)) = parse_command(&payload) else {
+            panic!("这条应该是弹幕");
+        };
+        assert_eq!(danmaku.reply_to.as_deref(), Some("Black-Cat_-"));
+        assert!(danmaku.face.is_some());
+    }
+
     #[test]
     fn gift_v2_decodes_protobuf() {
         fn varint(mut n: u64, out: &mut Vec<u8>) {

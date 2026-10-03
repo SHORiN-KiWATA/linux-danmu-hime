@@ -120,6 +120,7 @@ impl Args {
             offset_y: Some(self.offset_y),
             font_size: Some(self.theme.font_size),
             line_gap: Some(self.theme.line_gap),
+            row_gap: Some(self.theme.row_gap),
             opacity: Some(self.theme.panel_alpha),
             ttl: Some(self.ttl),
             fade: Some(self.fade),
@@ -243,6 +244,7 @@ struct FileConfig {
     margin: Option<i32>,
     font_size: Option<f32>,
     line_gap: Option<f32>,
+    row_gap: Option<f32>,
     opacity: Option<f32>,
     ttl: Option<f32>,
     fade: Option<f32>,
@@ -1023,6 +1025,9 @@ impl Overlay {
         }
         if let Some(gap) = config.line_gap {
             self.renderer.set_base_line_gap(gap);
+        }
+        if let Some(gap) = config.row_gap {
+            self.renderer.set_row_gap(gap);
         }
         if let Some(zoom) = config.zoom {
             self.renderer.set_zoom(zoom);

@@ -41,6 +41,8 @@ _ZH = {
     "Show avatars hint": "头像地址就在弹幕里，不用另调接口；同一个人只下一次",
     "Round avatars": "头像裁圆",
     "Round avatars hint": "B 站给的是方图，裁成圆的更像直播姬那种",
+    "Row gap": "消息间距",
+    "Row gap hint": "两条弹幕之间的距离（像素）；一条弹幕内部换行的行距是另一项",
     "Colors": "配色",
     "Name color": "昵称颜色",
     "Text color": "正文颜色",

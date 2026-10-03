@@ -41,8 +41,10 @@ pub struct Theme {
     pub font_size: f32,
     /// 底板的不透明度；0 就是只有字。
     pub panel_alpha: f32,
-    /// 两行之间的空隙（底板上仍然是连着的）。
+    /// 一条消息**内部**换行时的行距（0.1.3 起就是这个）。
     pub line_gap: f32,
+    /// **消息与消息之间**的距离，单位像素（默认 10）。
+    pub row_gap: f32,
     /// 昵称（和牌子）的颜色。
     pub name_color: (u8, u8, u8),
     /// 弹幕内容的颜色。
@@ -61,6 +63,7 @@ impl Default for Theme {
             text_color: (255, 255, 255),
             panel_rgb: (0, 0, 0),
             line_gap: 4.0,
+            row_gap: 10.0,
         }
     }
 }
@@ -176,6 +179,11 @@ impl Renderer {
     }
 
     /// 改行距基准值（热重载用）。
+    /// 消息与消息之间的距离（像素，随显示设置直接生效）。
+    pub fn set_row_gap(&mut self, gap: f32) {
+        self.theme.row_gap = gap.max(0.0);
+    }
+
     pub fn set_base_line_gap(&mut self, gap: f32) {
         if gap >= 0.0 {
             self.base_line_gap = gap;
@@ -284,7 +292,7 @@ impl Renderer {
     ) {
         let size = self.theme.font_size;
         let line_height = self.line_height();
-        let gap = self.theme.line_gap;
+        let row_gap = self.theme.row_gap.max(0.0);
         let pad_x = (size * 0.7).round();
         let pad_y = (size * 0.3).round();
         let width = pixmap.width() as f32;
@@ -301,7 +309,7 @@ impl Renderer {
             .iter()
             .map(|row| line_height * row.collapse.clamp(0.0, 1.0))
             .sum();
-        let panel_height = heights + (count - 1.0) * gap + pad_y * 2.0;
+        let panel_height = heights + (count - 1.0) * row_gap + pad_y * 2.0;
         let panel_top = height + scroll - panel_height;
         let panel_alpha = lines
             .iter()
@@ -330,7 +338,7 @@ impl Renderer {
             let row_h = line_height * row.collapse.clamp(0.0, 1.0);
             if row_h <= 0.5 {
                 // 已经收完了：留着占位没意义，往下继续排
-                bottom -= gap;
+                bottom -= row_gap;
                 continue;
             }
             let top = bottom - row_h;
@@ -367,7 +375,7 @@ impl Renderer {
                 &row.text,
                 max_x,
             );
-            bottom = top - gap;
+            bottom = top - row_gap;
         }
     }
 }

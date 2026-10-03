@@ -656,6 +656,9 @@ class ConfigWindow(Adw.ApplicationWindow):
         font_group.add(self.avatar_round_row)
         self._add_slider(font_group, "font_size", _("Font size"), 10, 48, 1, "px")
         self._add_slider(
+            font_group, "row_gap", _("Row gap"), 0, 40, 1, "px", subtitle=_("Row gap hint")
+        )
+        self._add_slider(
             font_group, "line_gap", _("Line gap"), 0, 24, 1, "px", subtitle=_("Line gap hint")
         )
         self._add_slider(

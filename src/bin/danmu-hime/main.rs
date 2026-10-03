@@ -1335,7 +1335,6 @@ impl Overlay {
         // 容量按设备像素高度算（逻辑高度 × 缩放才是缓冲的真实高度）
         let capacity = self.renderer.capacity(height);
         let lines = self.visible_lines(Instant::now(), width, capacity);
-        let pixels = self.renderer.render(width, height, &lines, self.slide);
 
         let (buffer, canvas) = match self.pool.create_buffer(
             width as i32,
@@ -1350,8 +1349,9 @@ impl Overlay {
                 return;
             }
         };
-        let length = pixels.len().min(canvas.len());
-        canvas[..length].copy_from_slice(&pixels[..length]);
+        // 直接画进共享内存：不再每帧新分配一块 850KB 位图、也不再整屏拷一遍
+        self.renderer
+            .render_into(canvas, width, height, &lines, self.slide);
 
         surface.damage_buffer(0, 0, width as i32, height as i32);
         if let Err(err) = buffer.attach_to(surface) {
@@ -1727,11 +1727,25 @@ fn emote_cache_dir() -> Option<std::path::PathBuf> {
 }
 
 /// 拉一张表情图：缓存里有就直接发给主线程，没有就后台下一张、下好再发。
+/// 同一个字符只下一次（主线程和弹幕线程共用这一份）。
+static EMOTES_SEEN: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<char>>> =
+    std::sync::OnceLock::new();
+
+fn seen_emotes() -> &'static std::sync::Mutex<std::collections::HashSet<char>> {
+    EMOTES_SEEN.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+}
+
+/// 渲染器把一张图从内存里挤出去之后叫一声：把「下过」的记录删掉，
+/// 这样那个头像/表情下次再出现能重新下（命中小本地缓存，代价很小）。
+pub(crate) fn forget_emote(ch: char) {
+    seen_emotes()
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .remove(&ch);
+}
+
 fn ensure_emote(tx: &Sender<UiEvent>, ch: char, url: &str) {
-    // 同一个字符只下一次（主线程和弹幕线程共用这一份）
-    static SEEN: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<char>>> =
-        std::sync::OnceLock::new();
-    let seen = SEEN.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+    let seen = seen_emotes();
     if !seen.lock().unwrap_or_else(|err| err.into_inner()).insert(ch) {
         return;
     }

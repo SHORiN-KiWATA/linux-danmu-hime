@@ -10,7 +10,7 @@
 
 use ab_glyph::{Font, FontRef, GlyphId, PxScale, ScaleFont};
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use tiny_skia::{Color, Paint, Pixmap, Rect, Shader, Transform};
 
@@ -89,6 +89,12 @@ pub struct Renderer {
     /// B 站弹幕表情（`[dog]` 这种）的原图，挂在占位字符上。
     /// 有图之后这个字符就不再用字体里的 emoji，直接贴原图。
     emote_sources: RefCell<HashMap<char, Rc<png::Image>>>,
+    /// `emote_sources` 的插入顺序：超过上限就从最旧的开始丢。
+    /// 一个字符对应一张图、来了就不再变，所以「丢最旧的」就够，不用做完整 LRU。
+    emote_order: RefCell<VecDeque<char>>,
+    /// 循环用的那块位图。每帧新建一块 850KB 走的是 mmap，光缺页中断
+    /// 就比画一遍还贵（动画期间每秒 60 帧就白白交 60 次）。
+    scratch: RefCell<Option<Pixmap>>,
     /// 解好、缩好的 emoji 位图。按「字符 + 大小」缓存：每帧现解 PNG 太慢。
     emoji_cache: EmojiCache,
     /// 用户要的整体放大倍数（GUI 的「缩放」滑块）。
@@ -98,6 +104,12 @@ pub struct Renderer {
 /// 缓存键：字符 + 目标宽度（按 1/4 像素取整，够用了）。
 type EmojiKey = (char, u16);
 type EmojiCache = RefCell<HashMap<EmojiKey, Option<Rc<Emoji>>>>;
+
+/// 内存里最多留多少张图（表情 / 头像 / 礼物图标共用一个池子）。
+/// 忙房间里每个新用户就是一个头像，不设上限的话挂一整天内存只涨不跌；
+/// 256 张按平均几十 KB 算，撑死十来兆。挤出去的图下次要用会重新下
+/// （走本地磁盘缓存，代价很小）。
+const EMOTE_CACHE_MAX: usize = 256;
 
 /// 缩到目标尺寸的 emoji 位图（RGBA8，非预乘）。
 struct Emoji {
@@ -121,6 +133,8 @@ impl Renderer {
             emoji_font: None,
             emoji_cache: RefCell::new(HashMap::new()),
             emote_sources: RefCell::new(HashMap::new()),
+            emote_order: RefCell::new(VecDeque::new()),
+            scratch: RefCell::new(None),
         }
     }
 
@@ -141,7 +155,7 @@ impl Renderer {
         if image.width == 0 || image.height == 0 {
             return false;
         }
-        self.emote_sources.borrow_mut().insert(ch, Rc::new(image));
+        self.remember_image(ch, image);
         // 同一个字符之前可能按「字体 emoji」缓存过，尺寸也不一样，全丢掉
         self.emoji_cache
             .borrow_mut()
@@ -158,11 +172,47 @@ impl Renderer {
             return false;
         }
         circle_mask(&mut image);
-        self.emote_sources.borrow_mut().insert(ch, Rc::new(image));
+        self.remember_image(ch, image);
         self.emoji_cache
             .borrow_mut()
             .retain(|(cached, _), _| *cached != ch);
         true
+    }
+
+    /// 收下解码好的图，顺手把最旧的挤出上限之外
+    /// （连着它的 emoji 位图缓存一起清，并允许以后重新下）。
+    fn remember_image(&self, ch: char, image: png::Image) {
+        let first_time = {
+            let mut map = self.emote_sources.borrow_mut();
+            let fresh = !map.contains_key(&ch);
+            map.insert(ch, Rc::new(image));
+            fresh
+        };
+        if first_time {
+            self.emote_order.borrow_mut().push_back(ch);
+        }
+        let mut evicted = Vec::new();
+        {
+            let mut map = self.emote_sources.borrow_mut();
+            let mut order = self.emote_order.borrow_mut();
+            while map.len() > EMOTE_CACHE_MAX {
+                let Some(oldest) = order.pop_front() else {
+                    break;
+                };
+                // 刚插进来的那张不能自己把自己挤掉
+                if oldest != ch && map.remove(&oldest).is_some() {
+                    evicted.push(oldest);
+                }
+            }
+        }
+        if !evicted.is_empty() {
+            self.emoji_cache
+                .borrow_mut()
+                .retain(|(cached, _), _| !evicted.contains(cached));
+            for gone in evicted {
+                crate::forget_emote(gone);
+            }
+        }
     }
 
     pub fn set_emoji_font(&mut self, font: memmap2::Mmap, index: u32) {
@@ -216,23 +266,47 @@ impl Renderer {
     /// `scroll` 是整体往下的位移（设备像素）：新弹幕进来时整摞先被压下去一点，
     /// 再随时间回到 0，看起来就是「被顶上去」的过渡，而不是瞬移。
     pub fn render(&self, width: u32, height: u32, lines: &[DrawLine], scroll: f32) -> Vec<u8> {
-        let mut pixmap = match Pixmap::new(width, height) {
-            Some(pixmap) => pixmap,
-            None => return vec![0; (width * height * 4) as usize],
+        let mut pixels = vec![0; (width * height * 4) as usize];
+        self.render_into(&mut pixels, width, height, lines, scroll);
+        pixels
+    }
+
+    /// 画一帧，直接倒进 `canvas`（wl_shm 的 Argb8888 字节序）。
+    /// 内部那张位图循环用，省掉「每帧新分配 + 再拷一遍」的大内存来回。
+    pub fn render_into(
+        &self,
+        canvas: &mut [u8],
+        width: u32,
+        height: u32,
+        lines: &[DrawLine],
+        scroll: f32,
+    ) {
+        let mut scratch = self.scratch.borrow_mut();
+        let sized = scratch
+            .as_ref()
+            .is_some_and(|pixmap| pixmap.width() == width && pixmap.height() == height);
+        if !sized {
+            *scratch = Pixmap::new(width, height);
+        }
+        let Some(pixmap) = scratch.as_mut() else {
+            canvas.fill(0);
+            return;
         };
+        // 复用同一块内存，得自己擦干净（新建的本来就是全零）
+        pixmap.fill(Color::TRANSPARENT);
         let visible: Vec<&DrawLine> = lines.iter().filter(|line| line.alpha > 0.01).collect();
         if !visible.is_empty()
             && let Ok(font) = FontRef::try_from_slice_and_index(&self.font, self.font_index)
         {
-            self.draw_content(&mut pixmap, &font, &visible, scroll.max(0.0));
+            self.draw_content(pixmap, &font, &visible, scroll.max(0.0));
         }
-        let mut pixels = pixmap.take();
         // tiny-skia 的 RGBA8888 在内存里是 [R,G,B,A]，wl_shm 的 Argb8888 是
         // [B,G,R,A]，字节序反着；不换的话蓝色会画成橙色。
-        for px in pixels.as_chunks_mut::<4>().0 {
+        let length = pixmap.data().len().min(canvas.len());
+        canvas[..length].copy_from_slice(&pixmap.data()[..length]);
+        for px in canvas[..length].as_chunks_mut::<4>().0 {
             px.swap(0, 2);
         }
-        pixels
     }
 
     /// 把要画的弹幕排成视觉行：一条弹幕太长就在底板宽度里软换行，
@@ -966,6 +1040,37 @@ mod tests {
         assert_eq!(pixels.len(), 120 * 80 * 4);
         // 全零 = 全透明：没弹幕时这一层什么都不显示
         assert!(pixels.iter().all(|byte| *byte == 0));
+    }
+
+    /// 图池有上限：塞爆之后只留新的，旧的被挤掉（内存不会随房间一直涨）。
+    #[test]
+    fn image_cache_evicts_the_oldest() {
+        let renderer = renderer();
+        let ch_of = |i: u32| char::from_u32(0xE000 + i).expect("都在私用区");
+        let total = EMOTE_CACHE_MAX as u32 + 44;
+        for i in 0..total {
+            renderer.remember_image(
+                ch_of(i),
+                png::Image {
+                    width: 2,
+                    height: 2,
+                    rgba: vec![255; 2 * 2 * 4],
+                },
+            );
+        }
+        let kept = renderer.emote_sources.borrow().len();
+        assert!(
+            kept <= EMOTE_CACHE_MAX,
+            "图池要卡在 {EMOTE_CACHE_MAX} 张，现在是 {kept}"
+        );
+        assert!(
+            !renderer.emote_sources.borrow().contains_key(&ch_of(0)),
+            "最旧的那张应该被挤掉了"
+        );
+        assert!(
+            renderer.emote_sources.borrow().contains_key(&ch_of(total - 1)),
+            "最新的那张得留着"
+        );
     }
 
     fn line(text: &str) -> DrawLine {

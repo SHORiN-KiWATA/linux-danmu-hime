@@ -10,7 +10,7 @@
 
 use ab_glyph::{Font, FontRef, GlyphId, PxScale, ScaleFont};
 use std::cell::RefCell;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 use tiny_skia::{Color, Paint, Pixmap, Rect, Shader, Transform};
 
@@ -183,6 +183,35 @@ impl Renderer {
     /// B 站的头像 / 礼物图经常是 1000×1000 以上，原尺寸存着解码后一张就 4～8 MB。
     fn image_cap(&self) -> u32 {
         ((self.theme.font_size * 1.2 * 2.0).round() as u32).clamp(48, 512)
+    }
+
+    /// 屏上已经没人用这些图了：把没被引用的放掉（连着它的 emoji 位图缓存
+    /// 和「下过」的记录一起清）。弹幕淡出之后就没必要继续占着内存。
+    pub fn retain_images(&self, alive: &HashSet<char>) {
+        let mut gone = Vec::new();
+        {
+            let mut map = self.emote_sources.borrow_mut();
+            map.retain(|ch, _| {
+                if alive.contains(ch) {
+                    true
+                } else {
+                    gone.push(*ch);
+                    false
+                }
+            });
+        }
+        if gone.is_empty() {
+            return;
+        }
+        self.emote_order
+            .borrow_mut()
+            .retain(|ch| alive.contains(ch));
+        self.emoji_cache
+            .borrow_mut()
+            .retain(|(cached, _), _| !gone.contains(cached));
+        for ch in gone {
+            crate::forget_emote(ch);
+        }
     }
 
     /// 收下解码好的图，顺手把最旧的挤出上限之外
@@ -1190,6 +1219,29 @@ mod tests {
             before as f32 / 1048576.0,
             after as f32 / 1048576.0
         );
+    }
+
+    #[test]
+    fn images_not_on_screen_are_released() {
+        let renderer = renderer();
+        let ch = |i: u32| char::from_u32(0xE000 + i).expect("私用区");
+        for i in 0..3 {
+            renderer.remember_image(
+                ch(i),
+                png::Image {
+                    width: 2,
+                    height: 2,
+                    rgba: vec![255; 16],
+                },
+            );
+        }
+        let alive: HashSet<char> = [ch(1), ch(2)].into_iter().collect();
+        renderer.retain_images(&alive);
+        let map = renderer.emote_sources.borrow();
+        assert_eq!(map.len(), 2, "屏上没引用的那张应该放掉");
+        assert!(!map.contains_key(&ch(0)));
+        drop(map);
+        assert_eq!(renderer.emote_order.borrow().len(), 2, "顺序表也要跟着清");
     }
 
     fn line(text: &str) -> DrawLine {

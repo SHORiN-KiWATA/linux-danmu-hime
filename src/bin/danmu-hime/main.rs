@@ -1201,6 +1201,13 @@ impl Overlay {
             .retain(|entry| now.saturating_duration_since(entry.received) < life);
         if self.entries.len() != before {
             self.dirty = true;
+            // 屏上已经没了的弹幕，它用过的头像/表情图也一起放掉
+            let mut alive = std::collections::HashSet::new();
+            for entry in &self.entries {
+                alive.extend(image_chars(&entry.prefix));
+                alive.extend(image_chars(&entry.text));
+            }
+            self.renderer.retain_images(&alive);
         }
         // 有动画要放（推弹幕/淡出）就按帧的节奏醒，安定了就回到「到点才醒」。
         self.timer_fast = self.needs_animation(now);
@@ -1521,6 +1528,14 @@ fn seed_emotes() -> &'static std::collections::HashMap<String, String> {
 }
 
 /// 这段文字里出现了哪些内置表情（token, url）。用于本地测试弹幕这种没有 url 的场景。
+/// 一行文字里哪些字符是「图片占位符」：表情在 U+E000 一带，
+/// 头像和礼物图在私用区 B 段（U+F0000 起）。普通正文不会用到这些码位。
+fn image_chars(text: &str) -> impl Iterator<Item = char> + '_ {
+    text.chars().filter(|ch| {
+        ('\u{E000}'..='\u{F8FF}').contains(ch) || ('\u{F0000}'..='\u{FFFFD}').contains(ch)
+    })
+}
+
 fn seed_emotes_in(text: &str) -> Vec<(String, String)> {
     let seed = seed_emotes();
     let mut found = Vec::new();

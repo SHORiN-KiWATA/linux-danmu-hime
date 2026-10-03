@@ -155,6 +155,18 @@ pub struct Gift {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct Guard {
+    pub uid: i64,
+    pub uname: String,
+    /// 1 总督，2 提督，3 舰长。
+    pub level: i64,
+    pub num: i64,
+    pub price: i64,
+    /// 「舰长」「提督」「总督」。
+    pub gift_name: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct SuperChat {
     pub uid: i64,
     pub uname: String,
@@ -185,6 +197,7 @@ impl Interact {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DanmakuEvent {
+    Guard(Guard),
     Danmaku(Danmaku),
     Gift(Gift),
     SuperChat(SuperChat),
@@ -247,6 +260,7 @@ pub fn parse_command(value: &serde_json::Value) -> Option<DanmakuEvent> {
     match cmd {
         "DANMU_MSG" => parse_danmaku(data),
         "SEND_GIFT" => Some(DanmakuEvent::Gift(parse_gift(data))),
+        "GUARD_BUY" => Some(DanmakuEvent::Guard(parse_guard(data))),
         "SUPER_CHAT_MESSAGE" => Some(DanmakuEvent::SuperChat(parse_super_chat(data))),
         "INTERACT_WORD" => Some(DanmakuEvent::Interact(parse_interact(data))),
         "LIKE_INFO_V3_CLICK" => Some(DanmakuEvent::Like {
@@ -510,6 +524,45 @@ fn parse_medal(value: &serde_json::Value) -> Option<Medal> {
     })
 }
 
+/// 上舰（`GUARD_BUY`）：键名照 blivedm 的 GuardBuyMessage——注意是 `username`，
+/// 不是别处的 `uname`；这条消息里没有头像。
+fn parse_guard(data: &serde_json::Value) -> Guard {
+    let level = data
+        .get("guard_level")
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or(0);
+    Guard {
+        uid: data
+            .get("uid")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0),
+        uname: data
+            .get("username")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("?")
+            .to_string(),
+        level,
+        num: data
+            .get("num")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(1),
+        price: data
+            .get("price")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0),
+        gift_name: data
+            .get("gift_name")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| match level {
+                1 => String::from("总督"),
+                2 => String::from("提督"),
+                _ => String::from("舰长"),
+            }),
+    }
+}
+
 fn parse_gift(data: &serde_json::Value) -> Gift {
     let num = data
         .get("num")
@@ -614,6 +667,27 @@ fn parse_interact(data: &serde_json::Value) -> Interact {
 
 #[cfg(test)]
 mod emote_tests {
+    #[test]
+    fn guard_buy_uses_username_key() {
+        // 照 blivedm 的 GuardBuyMessage.from_command 抄的键名
+        let data = serde_json::json!({
+            "uid": 1198508132,
+            "username": "某位观众",
+            "guard_level": 3,
+            "num": 1,
+            "price": 138000,
+            "gift_id": 10003,
+            "gift_name": "舰长",
+            "start_time": 1791016000,
+            "end_time": 1793610000
+        });
+        let guard = parse_guard(&data);
+        assert_eq!(guard.uname, "某位观众");
+        assert_eq!(guard.level, 3);
+        assert_eq!(guard.gift_name, "舰长");
+        assert_eq!(guard.num, 1);
+    }
+
     #[test]
     fn gift_carries_its_own_icon() {
         // 照 blivedm 的 GiftMessage.from_command 抄的键名

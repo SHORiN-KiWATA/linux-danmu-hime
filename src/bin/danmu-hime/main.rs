@@ -1818,6 +1818,15 @@ fn to_line(event: DanmakuEvent) -> Option<(String, String)> {
                 },
             ))
         }
+        DanmakuEvent::Guard(guard) => {
+            if !SHOW_GIFT.load(Ordering::Relaxed) {
+                return None;
+            }
+            Some((
+                format!("[上舰] {} ", guard.uname),
+                format!("{} ×{}", guard.gift_name, guard.num.max(1)),
+            ))
+        }
         DanmakuEvent::SuperChat(sc) => Some((
             format!("[SC ¥{}] {}: ", sc.price, sc.uname),
             sc.text.clone(),

@@ -13,7 +13,7 @@ pub mod protocol;
 
 pub use api::{BiliSession, Cookies, DanmuInfo, RoomInfo, load_cached_cookies, parse_room_arg};
 pub use client::{ClientEvent, DanmakuClient, DanmakuConnection};
-pub use protocol::{Danmaku, DanmakuEvent, Emote, Gift, Interact, Medal, SuperChat};
+pub use protocol::{Danmaku, DanmakuEvent, Emote, Guard, Gift, Interact, Medal, SuperChat};
 
 /// 给命令行工具用的小 runtime：单线程就够。
 ///

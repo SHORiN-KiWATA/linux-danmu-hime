@@ -1798,10 +1798,11 @@ fn expand_emotes_with(text: &str, emote: Option<&danmu_hime::protocol::Emote>) -
 fn to_line(event: DanmakuEvent) -> Option<(String, String)> {
     match &event {
         DanmakuEvent::Danmaku(danmaku) => danmaku_line(danmaku).map(|(prefix, text)| {
-            // 「回复 @某某」：直播里艾特别人的名字不在正文里，挂到正文前面
-            let text = match &danmaku.reply_to {
-                Some(name) => format!("@{name} {text}"),
-                None => text,
+            // 「回复 @某某」：名字不在正文里；挂到前缀（昵称那一侧）去，
+            // 前缀和正文不是一个颜色，一眼就能区分出来
+            let prefix = match &danmaku.reply_to {
+                Some(name) => format!("{prefix}@{name} "),
+                None => prefix,
             };
             // 头像当占位字符挂在前缀最前面，图下好之后渲染器会顶上去
             match avatar_char(danmaku) {
@@ -1813,14 +1814,17 @@ fn to_line(event: DanmakuEvent) -> Option<(String, String)> {
             if !SHOW_GIFT.load(Ordering::Relaxed) {
                 return None;
             }
+            // 「[礼物]」不要了：头像 + 昵称 + 动作 放前缀（昵称色），
+            // 礼物名 ×N 放正文（礼物色，见 Theme::text_color_for）
             let icon = gift_icon(gift).map(|(ch, _)| ch);
             let action = gift.action.clone().unwrap_or_else(|| String::from("赠送"));
             Some((
-                format!("[礼物] {} {action} ", gift.uname),
-                match icon {
-                    Some(ch) => format!("{ch}{} ×{}", gift.gift_name, gift.num.max(1)),
-                    None => format!("{} ×{}", gift.gift_name, gift.num.max(1)),
-                },
+                format!(
+                    "{}{} {action} ",
+                    icon.map(String::from).unwrap_or_default(),
+                    gift.uname
+                ),
+                format!("{} ×{}", gift.gift_name, gift.num.max(1)),
             ))
         }
         DanmakuEvent::Guard(guard) => {

@@ -49,6 +49,8 @@ pub struct Theme {
     pub name_color: (u8, u8, u8),
     /// 弹幕内容的颜色。
     pub text_color: (u8, u8, u8),
+    /// 礼物行里「礼物名 ×N」的颜色（比正文亮一点，一眼能看出是礼物）。
+    pub gift_color: (u8, u8, u8),
     /// 底板底色。
     pub panel_rgb: (u8, u8, u8),
 
@@ -61,6 +63,7 @@ impl Default for Theme {
             panel_alpha: 0.6,
             name_color: (255, 229, 138),
             text_color: (255, 255, 255),
+            gift_color: (255, 170, 210),
             panel_rgb: (0, 0, 0),
             line_gap: 4.0,
             row_gap: 10.0,

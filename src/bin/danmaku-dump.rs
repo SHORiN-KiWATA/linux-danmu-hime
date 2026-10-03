@@ -89,6 +89,12 @@ async fn run() -> Result<()> {
 
     while let Some(event) = rx.recv().await {
         match event {
+            DanmakuEvent::Guard(guard) => {
+                println!(
+                    "[上舰] {} {} ×{} (level={} price={})",
+                    guard.uname, guard.gift_name, guard.num, guard.level, guard.price
+                );
+            }
             ClientEvent::Connecting { attempt } => {
                 eprintln!(
                     "# 连接中{}…",

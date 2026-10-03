@@ -1546,11 +1546,18 @@ fn gift_icon(gift: &danmu_hime::protocol::Gift) -> Option<(char, String)> {
     if !SHOW_GIFT_ICON.load(Ordering::Relaxed) {
         return None;
     }
-    let url = gift_images()
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .get(&gift.gift_id)
-        .cloned()
+    // 消息自带的最准（blivedm：data.gift_info.img_basic），面板表只当兜底
+    let url = gift
+        .img
+        .clone()
+        .filter(|img| !img.is_empty())
+        .or_else(|| {
+            gift_images()
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .get(&gift.gift_id)
+                .cloned()
+        })
         .or_else(|| {
             gift_names()
                 .lock()
@@ -1794,8 +1801,9 @@ fn to_line(event: DanmakuEvent) -> Option<(String, String)> {
                 return None;
             }
             let icon = gift_icon(gift).map(|(ch, _)| ch);
+            let action = gift.action.clone().unwrap_or_else(|| String::from("赠送"));
             Some((
-                format!("[礼物] {} ", gift.uname),
+                format!("[礼物] {} {action} ", gift.uname),
                 match icon {
                     Some(ch) => format!("{ch}{} ×{}", gift.gift_name, gift.num.max(1)),
                     None => format!("{} ×{}", gift.gift_name, gift.num.max(1)),

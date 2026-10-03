@@ -142,6 +142,10 @@ pub struct Danmaku {
 pub struct Gift {
     pub gift_id: i64,
     pub face: Option<String>,
+    /// 礼物自带的图标地址（`data.gift_info.img_basic`），不用去拉礼物面板。
+    pub img: Option<String>,
+    /// '喂食' 或 '赠送'。
+    pub action: Option<String>,
     pub uid: i64,
     pub uname: String,
     pub gift_name: String,
@@ -527,6 +531,17 @@ fn parse_gift(data: &serde_json::Value) -> Gift {
             .and_then(serde_json::Value::as_str)
             .filter(|face| !face.is_empty())
             .map(str::to_string),
+        img: data
+            .get("gift_info")
+            .and_then(|info| info.get("img_basic"))
+            .and_then(serde_json::Value::as_str)
+            .filter(|img| !img.is_empty())
+            .map(str::to_string),
+        action: data
+            .get("action")
+            .and_then(serde_json::Value::as_str)
+            .filter(|action| !action.is_empty())
+            .map(str::to_string),
         uid: data
             .get("uid")
             .and_then(serde_json::Value::as_i64)
@@ -599,6 +614,33 @@ fn parse_interact(data: &serde_json::Value) -> Interact {
 
 #[cfg(test)]
 mod emote_tests {
+    #[test]
+    fn gift_carries_its_own_icon() {
+        // 照 blivedm 的 GiftMessage.from_command 抄的键名
+        let data = serde_json::json!({
+            "giftName": "辣条",
+            "num": 3,
+            "uname": "某位观众",
+            "face": "https://i1.hdslb.com/bfs/face/abc.jpg",
+            "uid": 9202840,
+            "giftId": 1,
+            "gift_info": {"img_basic": "https://s1.hdslb.com/bfs/live/d57afb7c.png"},
+            "action": "赠送",
+            "coin_type": "silver",
+            "price": 100
+        });
+        let gift = parse_gift(&data);
+        assert_eq!(gift.gift_name, "辣条");
+        assert_eq!(gift.num, 3);
+        assert_eq!(gift.gift_id, 1);
+        assert_eq!(
+            gift.img.as_deref(),
+            Some("https://s1.hdslb.com/bfs/live/d57afb7c.png")
+        );
+        assert_eq!(gift.action.as_deref(), Some("赠送"));
+        assert!(gift.face.is_some(), "送礼人的头像也要拿到");
+    }
+
     #[test]
     fn official_big_emote_has_no_text_field() {
         // 用户实测：官方大表情只有 url/width/height + emoticon_unique，没有 text

@@ -514,8 +514,11 @@ class ConfigWindow(Adw.ApplicationWindow):
         self.login_button.connect("clicked", lambda *_: self._open_login())
         self.login_row.add_suffix(self.login_button)
         login_group.add(self.login_row)
+        # 不要把 SESSDATA 明文摆在界面上：这一行留空就表示「用现在这个」，
+        # 要换账号直接粘一条新的进来（空着不会写回配置，不会把已登录的擦掉）。
         self.cookie_row = Adw.EntryRow(title=_("Cookie (optional)"))
-        self.cookie_row.set_text(str(self.values.get("cookie") or ""))
+        self.cookie_row.set_text("")
+        self.cookie_row.set_tooltip_text(_("Cookie hidden"))
         self.cookie_row.connect("changed", self._on_cookie_changed)
         login_group.add(self.cookie_row)
         self.login_hint = Adw.ActionRow(title=_("Login hint"))
@@ -850,6 +853,9 @@ class ConfigWindow(Adw.ApplicationWindow):
         dialog.present(self)
 
     def _on_cookie_changed(self, row: Adw.EntryRow) -> None:
+        # 界面上看不到已登录的 cookie，留空就当没改
+        if not self.cookie_row.get_text().strip():
+            return
         self._set("cookie", row.get_text().strip() or None)
         self._sync_login()
 

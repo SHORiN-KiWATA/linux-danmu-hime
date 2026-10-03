@@ -106,6 +106,9 @@ impl Args {
     /// 把当前生效的设置导成一份完整配置（`--print-config` 用）。
     fn to_file_config(&self) -> FileConfig {
         FileConfig {
+            avatar: Some(SHOW_AVATAR.load(Ordering::Relaxed)),
+            avatar_round: Some(ROUND_AVATAR.load(Ordering::Relaxed)),
+            gift_icon: Some(SHOW_GIFT_ICON.load(Ordering::Relaxed)),
             room: Some(self.room.clone()),
             cookie: self.cookie.clone(),
             output: self.output.clone(),
@@ -225,6 +228,9 @@ where
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
 struct FileConfig {
+    avatar: Option<bool>,
+    avatar_round: Option<bool>,
+    gift_icon: Option<bool>,
     room: Option<String>,
     cookie: Option<String>,
     output: Option<String>,
@@ -612,6 +618,8 @@ fn main() -> Result<()> {
 
     SHOW_MEDAL.store(args.medal, std::sync::atomic::Ordering::Relaxed);
     SHOW_GIFT.store(args.gift, std::sync::atomic::Ordering::Relaxed);
+    // 礼物图标：面板接口不用登录，后台拉一次就够（存盘，下次启动直接读）
+    preload_gift_panel(args.room.clone());
     let restart_only = RestartOnly {
         room: args.room.clone(),
         cookie: args.cookie.clone(),
@@ -893,8 +901,15 @@ impl Overlay {
             UiEvent::Danmaku { prefix, text } => (Kind::Danmaku, prefix, text),
             UiEvent::Notice(text) => (Kind::System, String::new(), text),
             UiEvent::Emote { ch, bytes } => {
-                // 表情原图到了：挂到渲染器上，之后这个字符一律贴真图
-                if self.renderer.load_emote(ch, &bytes) {
+                // 图到了：挂到渲染器上，之后这个字符一律贴真图。
+                // 私用区 B 段前半是头像，按开关裁成圆的。
+                let round = ROUND_AVATAR.load(Ordering::Relaxed) && ch < '\u{F8000}';
+                let loaded = if round {
+                    self.renderer.load_avatar(ch, &bytes)
+                } else {
+                    self.renderer.load_emote(ch, &bytes)
+                };
+                if loaded {
                     self.dirty = true;
                 }
                 return;
@@ -1057,6 +1072,15 @@ impl Overlay {
         }
         if let Some(gift) = config.gift {
             SHOW_GIFT.store(gift, Ordering::Relaxed);
+        }
+        if let Some(avatar) = config.avatar {
+            SHOW_AVATAR.store(avatar, Ordering::Relaxed);
+        }
+        if let Some(round) = config.avatar_round {
+            ROUND_AVATAR.store(round, Ordering::Relaxed);
+        }
+        if let Some(icon) = config.gift_icon {
+            SHOW_GIFT_ICON.store(icon, Ordering::Relaxed);
         }
         if let Some(x) = config.offset_x {
             self.offset_x = x;
@@ -1352,6 +1376,16 @@ fn spawn_danmaku(room_id: i64, cookies: Cookies, tx: Sender<UiEvent>) {
                         {
                             ensure_emote(&tx, emote_placeholder(&emote.text), &emote.url);
                         }
+                        // 头像：地址就在弹幕里（不用另调接口），同样是「先下好再贴上去」
+                        if let DanmakuEvent::Danmaku(danmaku) = &event
+                            && let Some(ch) = avatar_char(danmaku)
+                            && let Some(face) = &danmaku.face
+                        {
+                            ensure_emote(&tx, ch, face);
+                        }
+                        if let DanmakuEvent::Gift(gift) = &event {
+                            ensure_gift_icon(&tx, gift);
+                        }
                         match to_line(event) {
                             Some((prefix, text)) => UiEvent::Danmaku { prefix, text },
                             None => continue,
@@ -1370,6 +1404,17 @@ fn spawn_danmaku(room_id: i64, cookies: Cookies, tx: Sender<UiEvent>) {
 static SHOW_MEDAL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 /// 要不要画礼物（SC 一直画）。
 static SHOW_GIFT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+/// 要不要画头像（频道里那个小圆脸，B 站给的是方的）。
+static SHOW_AVATAR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+/// 头像裁成圆的（关了就是方图）。
+static ROUND_AVATAR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+/// 要不要给礼物画上小图标。
+static SHOW_GIFT_ICON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+/// 礼物 id/名字 → 图地址：起来时从礼物面板拉一次，存盘，下次直接读。
+static GIFT_IMAGES: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<i64, String>>> =
+    std::sync::OnceLock::new();
+static GIFT_NAMES: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, String>>> =
+    std::sync::OnceLock::new();
 
 /// B 站经典小表情（`[dog]` 这种）在 web 客户端里是写死的一张表，没有公开接口
 /// （`GetEmoticons` 给的是房间大表情，而且要登录）。这里对着常见的那批做一张
@@ -1477,6 +1522,148 @@ fn emote_placeholder(token: &str) -> char {
         .bytes()
         .fold(0u32, |acc, byte| acc.wrapping_mul(31).wrapping_add(byte as u32));
     char::from_u32(0xE000 + hash % 0x1900).unwrap_or(char::from_u32(0xE000).unwrap())
+}
+
+/// 头像的占位字符：私用区 B 段，从 U+F0000 起一个 uid 一个位置。
+/// 字体里没有这个码位，所以不会画出别的东西——只有图下好了才画。
+fn avatar_char(danmaku: &danmu_hime::protocol::Danmaku) -> Option<char> {
+    if !SHOW_AVATAR.load(Ordering::Relaxed) || danmaku.face.is_none() {
+        return None;
+    }
+    char::from_u32(0xF0000 + (danmaku.uid.unsigned_abs() % 0x7FFE) as u32)
+}
+
+fn gift_images() -> &'static std::sync::Mutex<std::collections::HashMap<i64, String>> {
+    GIFT_IMAGES.get_or_init(Default::default)
+}
+
+fn gift_names() -> &'static std::sync::Mutex<std::collections::HashMap<String, String>> {
+    GIFT_NAMES.get_or_init(Default::default)
+}
+
+/// 礼物的占位字符 + 图地址：`U+F8000` 起按礼物 id 分（和头像同一段私用区，互不重叠）。
+fn gift_icon(gift: &danmu_hime::protocol::Gift) -> Option<(char, String)> {
+    if !SHOW_GIFT_ICON.load(Ordering::Relaxed) {
+        return None;
+    }
+    let url = gift_images()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .get(&gift.gift_id)
+        .cloned()
+        .or_else(|| {
+            gift_names()
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .get(&gift.gift_name)
+                .cloned()
+        })?;
+    let ch = char::from_u32(0xF8000 + (gift.gift_id.unsigned_abs() % 0x7FFE) as u32)?;
+    Some((ch, url))
+}
+
+/// 礼物图还没下好就先不画，下一步就有了。
+fn ensure_gift_icon(tx: &Sender<UiEvent>, gift: &danmu_hime::protocol::Gift) {
+    if let Some((ch, url)) = gift_icon(gift) {
+        ensure_emote(tx, ch, url.as_str());
+    }
+}
+
+/// 礼物面板（不用登录）→「id/名字 → 图地址」两张表；有存盘就直接读。
+fn preload_gift_panel(room: String) {
+    let Some(base) = emote_cache_dir().and_then(|dir| dir.parent().map(Path::to_path_buf)) else {
+        return;
+    };
+    let cache = base.join("gifts.json");
+    if let Ok(text) = std::fs::read_to_string(&cache) && load_gift_json(&text) {
+        return;
+    }
+    std::thread::spawn(move || {
+        let Ok(runtime) = danmu_hime::runtime() else {
+            return;
+        };
+        let url = format!(
+            "https://api.live.bilibili.com/xlive/web-room/v1/giftPanel/giftConfig?platform=pc&room_id={room}"
+        );
+        let Ok(bytes) = runtime.block_on(danmu_hime::api::fetch_image(&url)) else {
+            return;
+        };
+        let Ok(text) = String::from_utf8(bytes) else {
+            return;
+        };
+        if load_gift_json(&text) {
+            let _ = std::fs::create_dir_all(&base);
+            let _ = std::fs::write(&cache, &text);
+        }
+    });
+}
+
+/// 面板 JSON → 两张表；认得出来就 true。
+fn load_gift_json(text: &str) -> bool {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(text) else {
+        return false;
+    };
+    let Some(list) = value
+        .get("data")
+        .and_then(|data| data.get("list"))
+        .and_then(serde_json::Value::as_array)
+    else {
+        return false;
+    };
+    let mut by_id = gift_images().lock().unwrap_or_else(|error| error.into_inner());
+    let mut by_name = gift_names().lock().unwrap_or_else(|error| error.into_inner());
+    for item in list {
+        let Some(url) = item
+            .get("img_basic")
+            .or_else(|| item.get("webp"))
+            .and_then(serde_json::Value::as_str)
+        else {
+            continue;
+        };
+        // 面板里有两种写法：老礼物带扩展名（…/d57afb.png），新的不带（…/37bdd2）。
+        // 不带的那个直接 GET 是 404 XML，补上 .png 才是图。
+        let url = if url.rsplit('/').next().is_some_and(|file| !file.contains('.')) {
+            format!("{url}.png")
+        } else {
+            url.to_string()
+        };
+        if let Some(id) = item.get("id").and_then(serde_json::Value::as_i64) {
+            by_id.insert(id, url.clone());
+        }
+        if let Some(name) = item.get("name").and_then(serde_json::Value::as_str) {
+            by_name.insert(name.to_string(), url.clone());
+        }
+    }
+    !by_id.is_empty()
+}
+
+#[cfg(test)]
+mod gift_panel_tests {
+    use super::*;
+
+    #[test]
+    fn panel_urls_without_extension_get_png() {
+        let sample = r#"{"code":0,"data":{"list":[
+            {"id":34337,"name":"相约仙女湖","img_basic":"https://s1.hdslb.com/bfs/live/37bdd28e"},
+            {"id":1,"name":"辣条","img_basic":"https://s1.hdslb.com/bfs/live/d57afb7c.png"}
+        ]}}"#;
+        assert!(load_gift_json(sample), "面板 JSON 要能认出来");
+        let images = gift_images().lock().unwrap_or_else(|error| error.into_inner());
+        assert_eq!(
+            images.get(&34337).map(String::as_str),
+            Some("https://s1.hdslb.com/bfs/live/37bdd28e.png")
+        );
+        assert_eq!(
+            images.get(&1).map(String::as_str),
+            Some("https://s1.hdslb.com/bfs/live/d57afb7c.png")
+        );
+        drop(images);
+        let names = gift_names().lock().unwrap_or_else(|error| error.into_inner());
+        assert_eq!(
+            names.get("辣条").map(String::as_str),
+            Some("https://s1.hdslb.com/bfs/live/d57afb7c.png")
+        );
+    }
 }
 
 /// 表情图缓存目录：`$XDG_CACHE_HOME/danmu-hime/emotes`。
@@ -1589,14 +1776,24 @@ fn expand_emotes_with(text: &str, emote: Option<&danmu_hime::protocol::Emote>) -
 /// 挑我们要画的：弹幕、礼物、醒目留言都成一行；其它事件先不画。
 fn to_line(event: DanmakuEvent) -> Option<(String, String)> {
     match &event {
-        DanmakuEvent::Danmaku(danmaku) => danmaku_line(danmaku),
+        DanmakuEvent::Danmaku(danmaku) => danmaku_line(danmaku).map(|(prefix, text)| {
+            // 头像当占位字符挂在前缀最前面，图下好之后渲染器会顶上去
+            match avatar_char(danmaku) {
+                Some(ch) => (format!("{ch}{prefix}"), text),
+                None => (prefix, text),
+            }
+        }),
         DanmakuEvent::Gift(gift) => {
             if !SHOW_GIFT.load(Ordering::Relaxed) {
                 return None;
             }
+            let icon = gift_icon(gift).map(|(ch, _)| ch);
             Some((
                 format!("[礼物] {} ", gift.uname),
-                format!("{} ×{}", gift.gift_name, gift.num.max(1)),
+                match icon {
+                    Some(ch) => format!("{ch}{} ×{}", gift.gift_name, gift.num.max(1)),
+                    None => format!("{} ×{}", gift.gift_name, gift.num.max(1)),
+                },
             ))
         }
         DanmakuEvent::SuperChat(sc) => Some((

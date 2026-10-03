@@ -134,10 +134,14 @@ pub struct Danmaku {
     pub ts: i64,
     /// 这条弹幕带的表情（普通文字弹幕没有）。
     pub emote: Option<Emote>,
+    /// 头像地址，在弹幕里就带着，不用另调接口。
+    pub face: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Gift {
+    pub gift_id: i64,
+    pub face: Option<String>,
     pub uid: i64,
     pub uname: String,
     pub gift_name: String,
@@ -318,6 +322,13 @@ fn parse_danmaku(payload: &serde_json::Value) -> Option<DanmakuEvent> {
         .and_then(|m| m.get(15))
         .and_then(|v| v.get("user"))
         .filter(|v| !v.is_null());
+    // 头像：老协议在 info[0][15].user.base.face 里
+    let face = legacy_user
+        .and_then(|user| user.get("base"))
+        .and_then(|base| base.get("face"))
+        .and_then(serde_json::Value::as_str)
+        .filter(|face| !face.is_empty())
+        .map(str::to_string);
 
     let uid = user_arr
         .and_then(|a| a.first())
@@ -367,6 +378,7 @@ fn parse_danmaku(payload: &serde_json::Value) -> Option<DanmakuEvent> {
     let emote = meta.and_then(|m| parse_emote(m));
 
     Some(DanmakuEvent::Danmaku(Danmaku {
+            face,
         text,
         uid,
         uname,
@@ -480,6 +492,15 @@ fn parse_gift(data: &serde_json::Value) -> Gift {
         .or_else(|| data.get("price").and_then(serde_json::Value::as_i64))
         .unwrap_or(0);
     Gift {
+        gift_id: data
+            .get("giftId")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0),
+        face: data
+            .get("face")
+            .and_then(serde_json::Value::as_str)
+            .filter(|face| !face.is_empty())
+            .map(str::to_string),
         uid: data
             .get("uid")
             .and_then(serde_json::Value::as_i64)

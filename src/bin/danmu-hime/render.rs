@@ -140,6 +140,22 @@ impl Renderer {
         true
     }
 
+    /// 头像：和表情走同一条路（占位字符 → 原图顶替），只是画之前裁成圆的。
+    pub fn load_avatar(&self, ch: char, bytes: &[u8]) -> bool {
+        let Ok(mut image) = png::decode(bytes) else {
+            return false;
+        };
+        if image.width == 0 || image.height == 0 {
+            return false;
+        }
+        circle_mask(&mut image);
+        self.emote_sources.borrow_mut().insert(ch, Rc::new(image));
+        self.emoji_cache
+            .borrow_mut()
+            .retain(|(cached, _), _| *cached != ch);
+        true
+    }
+
     pub fn set_emoji_font(&mut self, font: memmap2::Mmap, index: u32) {
         self.emoji_font = Some((font, index));
         self.emoji_cache.borrow_mut().clear();
@@ -507,6 +523,15 @@ fn draw_text(
         let mut advance = scaled.h_advance(id);
         // 挂了 B 站原图的字符（含哈希出来的私用区占位符）一律先画原图：
         // 主字体里有没有这个字都无所谓，宽度统一按一个 em 算，免得字体给 0 宽度。
+        // 私用区 B 段只给「头像、礼物图」这种下好才画的图用：
+        // 图还没到时留个空格走人，别把 .notdef 的方框画出来。
+        if ('\u{F0000}'..='\u{FFFFD}').contains(&ch)
+            && !self.emote_sources.borrow().contains_key(&ch)
+        {
+            *x += size;
+            prev = Some(id);
+            continue;
+        }
         if self.emote_sources.borrow().contains_key(&ch) {
             // 这个字符画的是 B 站原图。B 站是按高度画的：高度给 1.2 个字，
             // 宽度按原图比例自然出来（「妙啊」那种 138×60 的长条就是又大又宽）。
@@ -729,6 +754,26 @@ fn blend(pixmap: &mut Pixmap, x: i32, y: i32, rgb: (u8, u8, u8), alpha: f32) {
     data[index + 3] = (255.0 * alpha + data[index + 3] as f32 * inv)
         .round()
         .min(255.0) as u8;
+}
+
+/// 把图画成圆的：B 站头像都是方的，弹幕姬那种圆的更好看。
+fn circle_mask(image: &mut png::Image) {
+    let (width, height) = (image.width as f32, image.height as f32);
+    let (center_x, center_y) = (width / 2.0, height / 2.0);
+    let radius = width.min(height) / 2.0;
+    for y in 0..image.height {
+        for x in 0..image.width {
+            let dx = x as f32 + 0.5 - center_x;
+            let dy = y as f32 + 0.5 - center_y;
+            let distance = (dx * dx + dy * dy).sqrt();
+            // 边缘留一个像素过渡，别出锯齿
+            let cover = (radius - distance).clamp(0.0, 1.0);
+            let index = ((y * image.width + x) * 4 + 3) as usize;
+            if let Some(alpha) = image.rgba.get_mut(index) {
+                *alpha = (*alpha as f32 * cover) as u8;
+            }
+        }
+    }
 }
 
 #[cfg(test)]

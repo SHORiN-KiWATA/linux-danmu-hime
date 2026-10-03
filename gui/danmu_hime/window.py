@@ -625,10 +625,35 @@ class ConfigWindow(Adw.ApplicationWindow):
             lambda row, _p: None if self._loading else self._set("gift", row.get_active()),
         )
         font_group.add(self.gift_row)
+        self.gift_icon_row = Adw.SwitchRow(
+            title=_("Show gift icons"), subtitle=_("Show gift icons hint")
+        )
+        self.gift_icon_row.set_active(bool(self.values.get("gift_icon", True)))
+        self.gift_icon_row.connect(
+            "notify::active",
+            lambda row, _p: None if self._loading else self._set("gift_icon", row.get_active()),
+        )
+        font_group.add(self.gift_icon_row)
         self.medal_row = Adw.SwitchRow(title=_("Show medal"), subtitle=_("Show medal hint"))
         self.medal_row.set_active(bool(self.values.get("medal", True)))
         self.medal_row.connect("notify::active", self._on_medal_toggled)
         font_group.add(self.medal_row)
+        self.avatar_row = Adw.SwitchRow(title=_("Show avatars"), subtitle=_("Show avatars hint"))
+        self.avatar_row.set_active(bool(self.values.get("avatar", True)))
+        self.avatar_row.connect(
+            "notify::active",
+            lambda row, _p: None if self._loading else self._set("avatar", row.get_active()),
+        )
+        font_group.add(self.avatar_row)
+        self.avatar_round_row = Adw.SwitchRow(
+            title=_("Round avatars"), subtitle=_("Round avatars hint")
+        )
+        self.avatar_round_row.set_active(bool(self.values.get("avatar_round", True)))
+        self.avatar_round_row.connect(
+            "notify::active",
+            lambda row, _p: None if self._loading else self._set("avatar_round", row.get_active()),
+        )
+        font_group.add(self.avatar_round_row)
         self._add_slider(font_group, "font_size", _("Font size"), 10, 48, 1, "px")
         self._add_slider(
             font_group, "line_gap", _("Line gap"), 0, 24, 1, "px", subtitle=_("Line gap hint")

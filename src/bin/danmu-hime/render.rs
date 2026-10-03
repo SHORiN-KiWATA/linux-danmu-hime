@@ -533,7 +533,7 @@ fn draw_text(
             continue;
         }
         if self.emote_sources.borrow().contains_key(&ch) {
-            // 这个字符画的是 B 站原图。B 站是按高度画的：高度给 0.95 个字，
+            // 这个字符画的是 B 站原图。B 站是按高度画的：高度给 1.2 个字，
             // 宽度按原图比例自然出来（「妙啊」那种 138×60 的长条就是又大又宽）。
             // 私用区字符的 .notdef 宽度实测能到 2.3em，不能拿来当尺寸。
             let aspect = self
@@ -542,9 +542,10 @@ fn draw_text(
                 .get(&ch)
                 .map(|source| source.width as f32 / source.height.max(1) as f32)
                 .unwrap_or(1.0);
-            // 高度按 0.95 个字：行高是 1.15 个字、基线到行顶约 0.93 个字，
-            // 按 1.2 画的话每张图顶上都会被裁掉几个像素（图多了一眼就看得出来）。
-            let drawn = size * 0.95 * aspect;
+            // 高度按 1.2 个字（0.1.3 的手感）：B 站就是这么画的。
+            // 注：行高 1.15 个字、基线到行顶约 0.93 个字，所以图顶会被裁掉几个像素，
+            // 想彻底不裁得让带图的行单独加高。
+            let drawn = size * 1.2 * aspect;
             advance = drawn.max(size); // 至少占一个汉字宽，光标跟着让开
             self.draw_emoji(pixmap, ch, *x, baseline, advance, alpha);
             *x += advance;

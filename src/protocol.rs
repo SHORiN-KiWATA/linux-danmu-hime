@@ -249,7 +249,16 @@ pub fn parse_command(value: &serde_json::Value) -> Option<DanmakuEvent> {
     if std::env::var_os("DANMU_HIME_DEBUG_RAW").is_some()
         && matches!(
             cmd,
-            "DANMU_MSG" | "SEND_GIFT" | "SUPER_CHAT_MESSAGE" | "GUARD_BUY" | "INTERACT_WORD"
+            "DANMU_MSG"
+                | "DANMU_MSG_MIRROR"
+                | "SEND_GIFT"
+                | "SEND_GIFT_V2"
+                | "COMBO_SEND"
+                | "SUPER_CHAT_MESSAGE"
+                | "GUARD_BUY"
+                | "USER_TOAST_MSG_V2"
+                | "INTERACT_WORD"
+                | "INTERACT_WORD_V2"
         )
     {
         eprintln!(

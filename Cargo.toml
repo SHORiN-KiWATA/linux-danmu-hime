@@ -14,6 +14,8 @@ path = "src/bin/danmaku-dump.rs"
 
 [dependencies]
 ab_glyph = "0.2.32"
+# 头像那边 B 站给的是 JPEG（表情和礼物图是 PNG），两种都得认
+jpeg-decoder = "0.3"
 anyhow = "1.0.104"
 chrono = "0.4.45"
 flate2 = "1.1.10"

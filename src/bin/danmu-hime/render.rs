@@ -1309,4 +1309,63 @@ mod tests {
             "R/B 还是反的：正确 {correct} 个，反的 {swapped} 个"
         );
     }
+
+    /// 拆开看一帧的钱花在哪：排版扫描 / 空底板 / 全画。
+    /// 默认跳过（跑一次约 3 秒）：
+    /// `cargo test --release bench_render_parts -- --ignored --nocapture`
+    #[test]
+    #[ignore = "手动跑的基准，不进日常测试"]
+    fn bench_render_parts() {
+        let renderer = renderer();
+        let texts = [
+            "这是一条普通长度的弹幕，用来量排版和贴字",
+            "短",
+            "下路让你轮上了，中文随便断但英文 words must not be split",
+            "[doge] 和 [大哭] 这种占位符这里只当普通字符",
+            "长一点的弹幕特别长特别长特别长特别长特别长特别长特别长特别长特别长特别长特别长特别长特别长特别长特别长会换行成好几行",
+        ];
+        let lines: Vec<DrawLine> = (0..14)
+            .map(|i| {
+                let mut l = line(texts[i % texts.len()]);
+                l.alpha = 0.5 + (i as f32 % 5.0) * 0.1;
+                l.collapse = 0.2;
+                l
+            })
+            .collect();
+        let (w, h) = (381u32, 560u32);
+        const FRAMES: u32 = 600;
+        let mut buffer = vec![0u8; (w * h * 4) as usize];
+
+        // (1) 排版扫描：visible_lines 每帧要为所有条目算一次行数
+        let entries: Vec<(String, String)> = (0..101)
+            .map(|i| (format!("{i}号观众: "), texts[i % texts.len()].to_string()))
+            .collect();
+        let start = std::time::Instant::now();
+        for _ in 0..FRAMES {
+            for (prefix, text) in &entries {
+                std::hint::black_box(renderer.rows_of(w, prefix, text));
+            }
+        }
+        let scan = start.elapsed() / FRAMES;
+
+        // (2) 空底板（一帧里除了底板什么都不画）
+        renderer.render_into(&mut buffer, w, h, &[], 0.0);
+        let start = std::time::Instant::now();
+        for _ in 0..FRAMES {
+            renderer.render_into(&mut buffer, w, h, &[], 0.0);
+        }
+        let empty = start.elapsed() / FRAMES;
+
+        // (3) 14 行全画
+        renderer.render_into(&mut buffer, w, h, &lines, 0.0);
+        let start = std::time::Instant::now();
+        for _ in 0..FRAMES {
+            renderer.render_into(&mut buffer, w, h, &lines, 0.0);
+        }
+        let full = start.elapsed() / FRAMES;
+
+        println!(
+            "[拆分] 排版扫描 101 条 {scan:?}/帧 ｜ 空底板 {empty:?}/帧 ｜ 14 行全画 {full:?}/帧"
+        );
+    }
 }

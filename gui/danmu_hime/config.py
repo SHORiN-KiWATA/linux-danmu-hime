@@ -25,7 +25,7 @@ DEFAULTS: dict[str, object] = {
     "margin": 20,
     "offset_x": -20,
     "offset_y": 456,
-    "font_size": 30.0,
+    "font_size": 28.0,
     "line_gap": 4.0,
     "row_gap": 10.0,
     "opacity": 0.6,

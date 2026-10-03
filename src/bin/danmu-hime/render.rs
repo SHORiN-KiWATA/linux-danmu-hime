@@ -10,8 +10,10 @@
 
 use ab_glyph::{Font, FontRef, GlyphId, PxScale, ScaleFont};
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
+use std::sync::OnceLock;
+use std::time::Instant;
 use tiny_skia::{Color, Paint, Pixmap, Rect, Shader, Transform};
 
 use crate::png;
@@ -88,10 +90,7 @@ pub struct Renderer {
     emoji_font: Option<(memmap2::Mmap, u32)>,
     /// B 站弹幕表情（`[dog]` 这种）的原图，挂在占位字符上。
     /// 有图之后这个字符就不再用字体里的 emoji，直接贴原图。
-    emote_sources: RefCell<HashMap<char, Rc<png::Image>>>,
-    /// `emote_sources` 的插入顺序：超过上限就从最旧的开始丢。
-    /// 一个字符对应一张图、来了就不再变，所以「丢最旧的」就够，不用做完整 LRU。
-    emote_order: RefCell<VecDeque<char>>,
+    emote_sources: RefCell<HashMap<char, Stamped<Rc<png::Image>>>>,
     /// 循环用的那块位图。每帧新建一块 850KB 走的是 mmap，光缺页中断
     /// 就比画一遍还贵（动画期间每秒 60 帧就白白交 60 次）。
     scratch: RefCell<Option<Pixmap>>,
@@ -101,15 +100,29 @@ pub struct Renderer {
     zoom: f32,
 }
 
+/// 缓存里的一项：东西本体 + 最后一次被用到的时间（[`clock`] 的秒数）。
+struct Stamped<T> {
+    value: T,
+    used: f64,
+}
+
 /// 缓存键：字符 + 目标宽度（按 1/4 像素取整，够用了）。
 type EmojiKey = (char, u16);
-type EmojiCache = RefCell<HashMap<EmojiKey, Option<Rc<Emoji>>>>;
+type EmojiCache = RefCell<HashMap<EmojiKey, Stamped<Option<Rc<Emoji>>>>>;
 
-/// 内存里最多留多少张图（表情 / 头像 / 礼物图标共用一个池子）。
-/// 忙房间里每个新用户就是一个头像，不设上限的话挂一整天内存只涨不跌；
-/// 256 张按平均几十 KB 算，撑死十来兆。挤出去的图下次要用会重新下
-/// （走本地磁盘缓存，代价很小）。
-const EMOTE_CACHE_MAX: usize = 256;
+/// 最后被用到之后还留多久（秒）。清缓存只按时间、不按条数：屏上还在用的
+/// 每次扫到都会续期，重复出现的表情不会因为「刚被挤掉」又重下一遍；
+/// 彻底没人用的才放掉，下次要用重新下（走本地磁盘缓存，几毫秒）。
+const CACHE_IDLE_SECS: f64 = 60.0;
+
+/// 多久扫一次缓存（秒）。一秒一次足够准，也省得每帧都去收集屏上的字符。
+pub const CACHE_SWEEP_INTERVAL: f64 = 1.0;
+
+/// 进程启动以来的秒数（单调）。只管缓存闲置了多久，别当墙上时间用。
+pub fn clock() -> f64 {
+    static START: OnceLock<Instant> = OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_secs_f64()
+}
 
 /// 缩到目标尺寸的 emoji 位图（RGBA8，非预乘）。
 struct Emoji {
@@ -133,7 +146,6 @@ impl Renderer {
             emoji_font: None,
             emoji_cache: RefCell::new(HashMap::new()),
             emote_sources: RefCell::new(HashMap::new()),
-            emote_order: RefCell::new(VecDeque::new()),
             scratch: RefCell::new(None),
         }
     }
@@ -185,69 +197,49 @@ impl Renderer {
         ((self.theme.font_size * 1.2 * 2.0).round() as u32).clamp(48, 512)
     }
 
-    /// 屏上已经没人用这些图了：把没被引用的放掉（连着它的 emoji 位图缓存
-    /// 和「下过」的记录一起清）。弹幕淡出之后就没必要继续占着内存。
-    pub fn retain_images(&self, alive: &HashSet<char>) {
+    /// 清一遍缓存：屏上还在用的续期，最后用到超过 [`CACHE_IDLE_SECS`] 秒的放掉。
+    /// 只按时间清、不按条数清——忙房间里每个新用户都是一个头像，硬性条数上限
+    /// 会逼着常客的图反复被挤出去；按时间的话「最近一分钟用过的」才留。
+    pub fn sweep_cache(&self, now: f64, on_screen: &HashSet<char>) {
         let mut gone = Vec::new();
         {
-            let mut map = self.emote_sources.borrow_mut();
-            map.retain(|ch, _| {
-                if alive.contains(ch) {
+            let mut images = self.emote_sources.borrow_mut();
+            images.retain(|ch, slot| {
+                if on_screen.contains(ch) {
+                    slot.used = now;
                     true
-                } else {
+                } else if now - slot.used > CACHE_IDLE_SECS {
                     gone.push(*ch);
                     false
+                } else {
+                    true
                 }
             });
         }
-        if gone.is_empty() {
-            return;
-        }
-        self.emote_order
-            .borrow_mut()
-            .retain(|ch| alive.contains(ch));
-        self.emoji_cache
-            .borrow_mut()
-            .retain(|(cached, _), _| !gone.contains(cached));
+        // 表情字形和缩放好的位图也一样：屏上用着的续期，没人用的过期
+        self.emoji_cache.borrow_mut().retain(|(ch, _), slot| {
+            if on_screen.contains(ch) {
+                slot.used = now;
+                true
+            } else {
+                now - slot.used <= CACHE_IDLE_SECS
+            }
+        });
+        // 放掉的图要允许以后重新下（不然字符就永久空着了）
         for ch in gone {
             crate::forget_emote(ch);
         }
     }
 
-    /// 收下解码好的图，顺手把最旧的挤出上限之外
-    /// （连着它的 emoji 位图缓存一起清，并允许以后重新下）。
+    /// 收下解码好的图。什么时候放掉交给 [`Renderer::sweep_cache`] 按时间算。
     fn remember_image(&self, ch: char, image: png::Image) {
-        let first_time = {
-            let mut map = self.emote_sources.borrow_mut();
-            let fresh = !map.contains_key(&ch);
-            map.insert(ch, Rc::new(image));
-            fresh
-        };
-        if first_time {
-            self.emote_order.borrow_mut().push_back(ch);
-        }
-        let mut evicted = Vec::new();
-        {
-            let mut map = self.emote_sources.borrow_mut();
-            let mut order = self.emote_order.borrow_mut();
-            while map.len() > EMOTE_CACHE_MAX {
-                let Some(oldest) = order.pop_front() else {
-                    break;
-                };
-                // 刚插进来的那张不能自己把自己挤掉
-                if oldest != ch && map.remove(&oldest).is_some() {
-                    evicted.push(oldest);
-                }
-            }
-        }
-        if !evicted.is_empty() {
-            self.emoji_cache
-                .borrow_mut()
-                .retain(|(cached, _), _| !evicted.contains(cached));
-            for gone in evicted {
-                crate::forget_emote(gone);
-            }
-        }
+        self.emote_sources.borrow_mut().insert(
+            ch,
+            Stamped {
+                value: Rc::new(image),
+                used: clock(),
+            },
+        );
     }
 
     pub fn set_emoji_font(&mut self, font: memmap2::Mmap, index: u32) {
@@ -664,7 +656,7 @@ fn draw_text(
                 .emote_sources
                 .borrow()
                 .get(&ch)
-                .map(|source| source.width as f32 / source.height.max(1) as f32)
+                .map(|slot| slot.value.width as f32 / slot.value.height.max(1) as f32)
                 .unwrap_or(1.0);
             // 高度按 1.2 个字（0.1.3 的手感）：B 站就是这么画的。
             // 注：行高 1.15 个字、基线到行顶约 0.93 个字，所以图顶会被裁掉几个像素，
@@ -740,14 +732,16 @@ impl Renderer {
     ) -> Option<Rc<Emoji>> {
         let key = (ch, (max_width * 4.0).round().clamp(1.0, 4096.0) as u16);
         if let Some(hit) = self.emoji_cache.borrow().get(&key) {
-            return hit.clone();
+            return hit.value.clone();
         }
         let built = self.build_emoji(font, index, ch, max_width).map(Rc::new);
-        let mut cache = self.emoji_cache.borrow_mut();
-        if cache.len() >= 512 {
-            cache.clear();
-        }
-        cache.insert(key, built.clone());
+        self.emoji_cache.borrow_mut().insert(
+            key,
+            Stamped {
+                value: built.clone(),
+                used: clock(),
+            },
+        );
         built
     }
 
@@ -756,9 +750,13 @@ impl Renderer {
     fn emote_image(&self, ch: char, max_width: f32) -> Option<Rc<Emoji>> {
         let key = (ch, (max_width * 4.0).round().clamp(1.0, 4096.0) as u16);
         if let Some(hit) = self.emoji_cache.borrow().get(&key) {
-            return hit.clone();
+            return hit.value.clone();
         }
-        let source = self.emote_sources.borrow().get(&ch).cloned()?;
+        let source = self
+            .emote_sources
+            .borrow()
+            .get(&ch)
+            .map(|slot| Rc::clone(&slot.value))?;
         // 等比缩放：按宽度缩，高度按原图比例出来（调用方按高度算好宽度传进来）
         let factor = max_width / source.width as f32;
         let width = ((source.width as f32 * factor).round() as u32).max(1);
@@ -768,11 +766,13 @@ impl Renderer {
             height,
             rgba: resize(&source, width, height),
         }));
-        let mut cache = self.emoji_cache.borrow_mut();
-        if cache.len() >= 512 {
-            cache.clear();
-        }
-        cache.insert(key, built.clone());
+        self.emoji_cache.borrow_mut().insert(
+            key,
+            Stamped {
+                value: built.clone(),
+                used: clock(),
+            },
+        );
         built
     }
 
@@ -1129,34 +1129,45 @@ mod tests {
         assert!(pixels.iter().all(|byte| *byte == 0));
     }
 
-    /// 图池有上限：塞爆之后只留新的，旧的被挤掉（内存不会随房间一直涨）。
+    /// 缓存只按时间清：屏上还在用的每次扫到都续期，最后用到超过闲置时长的才走。
     #[test]
-    fn image_cache_evicts_the_oldest() {
+    fn idle_images_are_dropped_and_on_screen_ones_renewed() {
         let renderer = renderer();
         let ch_of = |i: u32| char::from_u32(0xE000 + i).expect("都在私用区");
-        let total = EMOTE_CACHE_MAX as u32 + 44;
-        for i in 0..total {
-            renderer.remember_image(
-                ch_of(i),
-                png::Image {
-                    width: 2,
-                    height: 2,
-                    rgba: vec![255; 2 * 2 * 4],
-                },
-            );
+        let img = || png::Image {
+            width: 2,
+            height: 2,
+            rgba: vec![255; 2 * 2 * 4],
+        };
+        renderer.remember_image(ch_of(0), img());
+        renderer.remember_image(ch_of(1), img());
+        // 「下过」的记录也塞进去，验证放掉之后还能重新下
+        for ch in [ch_of(0), ch_of(1)] {
+            crate::seen_emotes().lock().expect("没被毒").insert(ch);
         }
-        let kept = renderer.emote_sources.borrow().len();
+        let t0 = clock();
+        let on_screen: HashSet<char> = [ch_of(1)].into_iter().collect();
+        // 50 秒时 1 号还在屏上 → 续期
+        renderer.sweep_cache(t0 + 50.0, &on_screen);
+        // 又过 50 秒：0 号闲置满了该走，1 号才续过还留着
+        renderer.sweep_cache(t0 + 100.0, &HashSet::new());
+        {
+            let kept = renderer.emote_sources.borrow();
+            assert!(!kept.contains_key(&ch_of(0)), "闲置 100 秒的该放掉了");
+            assert!(kept.contains_key(&ch_of(1)), "刚续过期的得留着，不能来回重下");
+        }
         assert!(
-            kept <= EMOTE_CACHE_MAX,
-            "图池要卡在 {EMOTE_CACHE_MAX} 张，现在是 {kept}"
+            !crate::seen_emotes()
+                .lock()
+                .expect("没被毒")
+                .contains(&ch_of(0)),
+            "放掉的图要允许以后重新下"
         );
+        // 再过 20 秒，1 号也闲置超过 60 秒了
+        renderer.sweep_cache(t0 + 120.0, &HashSet::new());
         assert!(
-            !renderer.emote_sources.borrow().contains_key(&ch_of(0)),
-            "最旧的那张应该被挤掉了"
-        );
-        assert!(
-            renderer.emote_sources.borrow().contains_key(&ch_of(total - 1)),
-            "最新的那张得留着"
+            !renderer.emote_sources.borrow().contains_key(&ch_of(1)),
+            "屏上没人之后时间够久就放掉"
         );
     }
 
@@ -1219,29 +1230,6 @@ mod tests {
             before as f32 / 1048576.0,
             after as f32 / 1048576.0
         );
-    }
-
-    #[test]
-    fn images_not_on_screen_are_released() {
-        let renderer = renderer();
-        let ch = |i: u32| char::from_u32(0xE000 + i).expect("私用区");
-        for i in 0..3 {
-            renderer.remember_image(
-                ch(i),
-                png::Image {
-                    width: 2,
-                    height: 2,
-                    rgba: vec![255; 16],
-                },
-            );
-        }
-        let alive: HashSet<char> = [ch(1), ch(2)].into_iter().collect();
-        renderer.retain_images(&alive);
-        let map = renderer.emote_sources.borrow();
-        assert_eq!(map.len(), 2, "屏上没引用的那张应该放掉");
-        assert!(!map.contains_key(&ch(0)));
-        drop(map);
-        assert_eq!(renderer.emote_order.borrow().len(), 2, "顺序表也要跟着清");
     }
 
     fn line(text: &str) -> DrawLine {

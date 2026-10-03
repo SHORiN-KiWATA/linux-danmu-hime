@@ -126,7 +126,7 @@ impl Renderer {
     /// 收下一张 B 站表情原图，挂到占位字符上（`[dog]` → 字体里那个 🐶）。
     /// 返回 false 说明这张图解不开（不是 png 之类），跳过就行。
     pub fn load_emote(&self, ch: char, bytes: &[u8]) -> bool {
-        let Ok(image) = png::decode(bytes) else {
+        let Some(image) = decode_image(bytes) else {
             return false;
         };
         if image.width == 0 || image.height == 0 {
@@ -142,7 +142,7 @@ impl Renderer {
 
     /// 头像：和表情走同一条路（占位字符 → 原图顶替），只是画之前裁成圆的。
     pub fn load_avatar(&self, ch: char, bytes: &[u8]) -> bool {
-        let Ok(mut image) = png::decode(bytes) else {
+        let Some(mut image) = decode_image(bytes) else {
             return false;
         };
         if image.width == 0 || image.height == 0 {
@@ -757,6 +757,35 @@ fn blend(pixmap: &mut Pixmap, x: i32, y: i32, rgb: (u8, u8, u8), alpha: f32) {
     data[index + 3] = (255.0 * alpha + data[index + 3] as f32 * inv)
         .round()
         .min(255.0) as u8;
+}
+
+/// 解一张图：表情和礼物图是 PNG，B 站头像是 JPEG，两种都得认。
+fn decode_image(bytes: &[u8]) -> Option<png::Image> {
+    if let Ok(image) = png::decode(bytes) {
+        return Some(image);
+    }
+    let mut decoder = jpeg_decoder::Decoder::new(bytes);
+    let pixels = decoder.decode().ok()?;
+    let info = decoder.info()?;
+    let mut rgba = Vec::with_capacity(pixels.len() / 3 * 4);
+    match info.pixel_format {
+        jpeg_decoder::PixelFormat::RGB24 => {
+            for chunk in pixels.chunks_exact(3) {
+                rgba.extend_from_slice(&[chunk[0], chunk[1], chunk[2], 255]);
+            }
+        }
+        jpeg_decoder::PixelFormat::L8 => {
+            for value in pixels {
+                rgba.extend_from_slice(&[value, value, value, 255]);
+            }
+        }
+        _ => return None,
+    }
+    Some(png::Image {
+        width: info.width as u32,
+        height: info.height as u32,
+        rgba,
+    })
 }
 
 /// 把图画成圆的：B 站头像都是方的，弹幕姬那种圆的更好看。

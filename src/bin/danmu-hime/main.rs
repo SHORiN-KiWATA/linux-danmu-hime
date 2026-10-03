@@ -903,7 +903,9 @@ impl Overlay {
             UiEvent::Emote { ch, bytes } => {
                 // 图到了：挂到渲染器上，之后这个字符一律贴真图。
                 // 私用区 B 段前半是头像，按开关裁成圆的。
-                let round = ROUND_AVATAR.load(Ordering::Relaxed) && ch < '\u{F8000}';
+                // 头像在 U+F0000..U+F7FFF，礼物图在后半段，表情占位在 U+E000 一带，别弄混
+                let round = ROUND_AVATAR.load(Ordering::Relaxed)
+                    && ('\u{F0000}'..'\u{F8000}').contains(&ch);
                 let loaded = if round {
                     self.renderer.load_avatar(ch, &bytes)
                 } else {

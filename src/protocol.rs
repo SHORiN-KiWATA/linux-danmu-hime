@@ -227,6 +227,19 @@ pub fn parse_command(value: &serde_json::Value) -> Option<DanmakuEvent> {
         .get("data")
         .filter(|data| !data.is_null())
         .unwrap_or(value);
+    // 调试开关：DANMU_HIME_DEBUG_RAW=1 时把弹幕/礼物这类消息原样打出来。
+    // （上一版只打在 parse_danmaku 里，礼物走不到那儿，白测了一轮。）
+    if std::env::var_os("DANMU_HIME_DEBUG_RAW").is_some()
+        && matches!(
+            cmd,
+            "DANMU_MSG" | "SEND_GIFT" | "SUPER_CHAT_MESSAGE" | "GUARD_BUY" | "INTERACT_WORD"
+        )
+    {
+        eprintln!(
+            "[raw-cmd] {cmd} {}",
+            serde_json::to_string(value).unwrap_or_default()
+        );
+    }
     match cmd {
         "DANMU_MSG" => parse_danmaku(data),
         "SEND_GIFT" => Some(DanmakuEvent::Gift(parse_gift(data))),

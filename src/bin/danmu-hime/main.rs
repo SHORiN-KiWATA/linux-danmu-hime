@@ -1146,11 +1146,20 @@ impl Overlay {
             let Some(tx) = self.ui_tx.clone() else {
                 return;
             };
-            let _ = tx.send(UiEvent::Danmaku {
-                kind: Kind::Danmaku,
-                prefix: "弹幕姬报告: ".to_string(),
-                text: line,
-            });
+            // 「礼物: xxx」当礼物行画（正文用礼物色），方便看礼物名的颜色
+            let message = match line.strip_prefix("礼物:") {
+                Some(body) => UiEvent::Danmaku {
+                    kind: Kind::Gift,
+                    prefix: "礼物测试: ".to_string(),
+                    text: body.trim_start().to_string(),
+                },
+                None => UiEvent::Danmaku {
+                    kind: Kind::Danmaku,
+                    prefix: "弹幕姬报告: ".to_string(),
+                    text: line,
+                },
+            };
+            let _ = tx.send(message);
         }
     }
 

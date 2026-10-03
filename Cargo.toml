@@ -1,6 +1,6 @@
 [package]
 name = "danmu-hime"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2024"
 description = "抓 B 站直播间弹幕：核心库 + 命令行 dump + Wayland layer-shell 浮层"
 

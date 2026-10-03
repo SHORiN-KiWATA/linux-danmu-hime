@@ -1566,6 +1566,12 @@ fn gift_icon(gift: &danmu_hime::protocol::Gift) -> Option<(char, String)> {
 fn ensure_gift_icon(tx: &Sender<UiEvent>, gift: &danmu_hime::protocol::Gift) {
     if let Some((ch, url)) = gift_icon(gift) {
         ensure_emote(tx, ch, url.as_str());
+        return;
+    }
+    // 表还没拉回来（或者上次拉失败了）：再拉一次。礼物面板跟房间无关，
+    // 用 room_id=1 也能拿到同一份清单。
+    if gift_images().lock().unwrap_or_else(|error| error.into_inner()).is_empty() {
+        preload_gift_panel(String::from("1"));
     }
 }
 

@@ -322,11 +322,24 @@ fn parse_danmaku(payload: &serde_json::Value) -> Option<DanmakuEvent> {
         .and_then(|m| m.get(15))
         .and_then(|v| v.get("user"))
         .filter(|v| !v.is_null());
-    // 头像：老协议在 info[0][15].user.base.face 里
-    let face = legacy_user
-        .and_then(|user| user.get("base"))
-        .and_then(|base| base.get("face"))
-        .and_then(serde_json::Value::as_str)
+    // 头像：B 站把用户对象塞在 info[0] 的某一格里，下标改过好几次
+    // （实测 2026-10 是 info[0][16]，老协议是 info[0][15]），所以整段扫一遍找
+    // user.base.face，别写死下标。
+    let face = meta
+        .and_then(|meta| {
+            meta.iter().find_map(|slot| {
+                slot.get("user")
+                    .and_then(|user| user.get("base"))
+                    .and_then(|base| base.get("face"))
+                    .and_then(serde_json::Value::as_str)
+            })
+        })
+        .or_else(|| {
+            legacy_user
+                .and_then(|user| user.get("base"))
+                .and_then(|base| base.get("face"))
+                .and_then(serde_json::Value::as_str)
+        })
         .filter(|face| !face.is_empty())
         .map(str::to_string);
 

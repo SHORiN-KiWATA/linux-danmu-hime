@@ -779,6 +779,8 @@ enum UiEvent {
         kind: Kind,
         prefix: String,
         text: String,
+        /// 礼物连击：同一个人连续送同一种礼物时，合并到屏上那一条里累加数量。
+        combo: Option<Combo>,
     },
     /// 连不上之类的问题，也用一条会淡出的提示表示一下。
     Notice(String),
@@ -789,12 +791,25 @@ enum UiEvent {
     },
 }
 
+/// 礼物连击的信息：`key` 认「谁送的哪种礼物」，`name`/`num` 用来重写「礼物名 ×N」。
+#[derive(Debug, Clone, PartialEq)]
+struct Combo {
+    key: String,
+    name: String,
+    num: i64,
+}
+
 /// 屏上的一条弹幕（画成什么样由渲染层决定）。
 struct Entry {
     kind: Kind,
     prefix: String,
     text: String,
+    /// 第一次出现的时刻：入场（淡入 + 滑上来）只按它算，连击时不会重播。
     received: Instant,
+    /// 最近一次续命的时刻：停留/淡出按它算。普通弹幕等于 `received`，
+    /// 礼物连击每来一次就刷新一次。
+    refreshed: Instant,
+    combo: Option<Combo>,
 }
 
 struct Overlay {
@@ -919,9 +934,14 @@ impl Overlay {
     }
 
     fn on_ui_event(&mut self, message: UiEvent) {
-        let (kind, prefix, text) = match message {
-            UiEvent::Danmaku { kind, prefix, text } => (kind, prefix, text),
-            UiEvent::Notice(text) => (Kind::System, String::new(), text),
+        let (kind, prefix, text, combo) = match message {
+            UiEvent::Danmaku {
+                kind,
+                prefix,
+                text,
+                combo,
+            } => (kind, prefix, text, combo),
+            UiEvent::Notice(text) => (Kind::System, String::new(), text, None),
             UiEvent::Emote { ch, bytes } => {
                 // 图到了：挂到渲染器上，之后这个字符一律贴真图。
                 // 私用区 B 段前半是头像，按开关裁成圆的。
@@ -952,11 +972,23 @@ impl Overlay {
                 ensure_emote(&tx, emote_placeholder(&token), &url);
             }
         }
+        let now = Instant::now();
+        // 礼物连击：屏上还有同一人同一礼物、而且还没开始淡出的那条，就把数量
+        // 加进去、续命，不另起一行刷屏。
+        if let Some(combo) = &combo
+            && merge_combo(&mut self.entries, combo, &prefix, now, self.ttl)
+        {
+            self.hurry_timer();
+            self.dirty = true;
+            return;
+        }
         self.entries.push_back(Entry {
             kind,
             prefix,
             text,
-            received: Instant::now(),
+            received: now,
+            refreshed: now,
+            combo,
         });
         while self.entries.len() > self.max_lines {
             self.entries.pop_front();
@@ -1160,11 +1192,13 @@ impl Overlay {
                     kind: Kind::Gift,
                     prefix: "礼物测试: ".to_string(),
                     text: body.trim_start().to_string(),
+                    combo: None,
                 },
                 None => UiEvent::Danmaku {
                     kind: Kind::Danmaku,
                     prefix: "弹幕姬报告: ".to_string(),
                     text: line,
+                    combo: None,
                 },
             };
             let _ = tx.send(message);
@@ -1191,7 +1225,11 @@ impl Overlay {
     fn needs_animation(&self, now: Instant) -> bool {
         self.slide > 0.0
             || self.entries.iter().any(|entry| {
-                fading(now.saturating_duration_since(entry.received), self.ttl)
+                fading(
+                    now.saturating_duration_since(entry.received),
+                    now.saturating_duration_since(entry.refreshed),
+                    self.ttl,
+                )
             })
     }
 
@@ -1206,7 +1244,7 @@ impl Overlay {
         // 抖动最多 +15%，这里按最长的那条算，免得它还没收拢就被摘掉
         let life = self.ttl.mul_f32(1.15) + self.fade + COLLAPSE;
         self.entries
-            .retain(|entry| now.saturating_duration_since(entry.received) < life);
+            .retain(|entry| now.saturating_duration_since(entry.refreshed) < life);
         if self.entries.len() != before {
             self.dirty = true;
         }
@@ -1237,7 +1275,7 @@ impl Overlay {
         let mut delay = IDLE_TICK;
         for entry in &self.entries {
             delay = delay.min(wakeup_for(
-                now.saturating_duration_since(entry.received),
+                now.saturating_duration_since(entry.refreshed),
                 self.ttl,
                 self.fade,
             ));
@@ -1279,8 +1317,12 @@ impl Overlay {
 
     /// 每条弹幕的停留时间稍微抖一下（±15%），同一批就不会挤在同一帧集体消失。
     fn ttl_of(&self, entry: &Entry) -> Duration {
+        // 连击会改「×N」：只按「×」前面那部分算，停留时间才不会跟着数字跳
         let hash: u32 = entry
             .text
+            .split(" ×")
+            .next()
+            .unwrap_or_default()
             .bytes()
             .fold(7u32, |acc, byte| acc.wrapping_mul(31).wrapping_add(byte as u32));
         let factor = 0.85 + 0.0003 * (hash % 1000) as f32;
@@ -1288,13 +1330,14 @@ impl Overlay {
     }
 
     fn alpha_of(&self, entry: &Entry, now: Instant) -> f32 {
-        let age = now.saturating_duration_since(entry.received);
-        fade_alpha(age, self.ttl_of(entry), self.fade).min(fade_in_alpha(age))
+        let age = now.saturating_duration_since(entry.refreshed);
+        let shown = now.saturating_duration_since(entry.received);
+        fade_alpha(age, self.ttl_of(entry), self.fade).min(fade_in_alpha(shown))
     }
 
     /// 0..1：淡完之后再用 200ms 把这一条占的高度收掉，上面的行是滑下去而不是跳。
     fn collapse_of(&self, entry: &Entry, now: Instant) -> f32 {
-        let age = now.saturating_duration_since(entry.received);
+        let age = now.saturating_duration_since(entry.refreshed);
         let settle = self.ttl_of(entry) + self.fade;
         if age <= settle {
             return 1.0;
@@ -1443,8 +1486,14 @@ fn spawn_danmaku(room_id: i64, cookies: Cookies, tx: Sender<UiEvent>) {
                         if let DanmakuEvent::Gift(gift) = &event {
                             ensure_gift_icon(&tx, gift);
                         }
+                        let combo = combo_of(&event);
                         match to_line(event) {
-                            Some((kind, prefix, text)) => UiEvent::Danmaku { kind, prefix, text },
+                            Some((kind, prefix, text)) => UiEvent::Danmaku {
+                                kind,
+                                prefix,
+                                text,
+                                combo,
+                            },
                             None => continue,
                         }
                     }
@@ -1861,6 +1910,30 @@ fn expand_emotes_with(text: &str, emote: Option<&danmu_hime::protocol::Emote>) -
     out
 }
 
+/// 礼物要不要参与连击合并：同一个人（uid，没有就用昵称）送同一种礼物（id，
+/// 没有就用名字）、同一个动作，算同一串连击。
+fn combo_of(event: &DanmakuEvent) -> Option<Combo> {
+    let DanmakuEvent::Gift(gift) = event else {
+        return None;
+    };
+    let who = if gift.uid != 0 {
+        gift.uid.to_string()
+    } else {
+        gift.uname.clone()
+    };
+    let what = if gift.gift_id != 0 {
+        gift.gift_id.to_string()
+    } else {
+        gift.gift_name.clone()
+    };
+    let action = gift.action.as_deref().unwrap_or("赠送");
+    Some(Combo {
+        key: format!("{who}\u{1f}{what}\u{1f}{action}"),
+        name: gift.gift_name.clone(),
+        num: gift.num.max(1),
+    })
+}
+
 /// 挑我们要画的：弹幕、礼物、醒目留言都成一行；其它事件先不画。
 /// 返回的 `Kind` 决定这一行正文用什么颜色（礼物行用礼物色）。
 fn to_line(event: DanmakuEvent) -> Option<(Kind, String, String)> {
@@ -1893,7 +1966,7 @@ fn to_line(event: DanmakuEvent) -> Option<(Kind, String, String)> {
                     icon.map(String::from).unwrap_or_default(),
                     gift.uname
                 ),
-                format!("{} ×{}", gift.gift_name, gift.num.max(1)),
+                combo_text(&gift.gift_name, gift.num),
             ))
         }
         DanmakuEvent::Guard(guard) => {
@@ -2237,9 +2310,46 @@ fn fade_alpha(age: Duration, ttl: Duration, fade: Duration) -> f32 {
 /// 这里故意提前一帧算：定时器醒来的时刻是「到点」那一刻，而那一刻
 /// `fade_alpha` 还正好等于 1.0（还没开始淡），要是按 alpha 判断就会认为
 /// 「没有动画」→ 直接睡到 fade 结束，整段淡出就被跳过去了。
-fn fading(age: Duration, ttl: Duration) -> bool {
+fn fading(shown: Duration, age: Duration, ttl: Duration) -> bool {
     // 淡入那 0.25 秒也算"有动画"，否则新弹幕会直接啪一下出现
-    age < FADE_IN || age + FRAME_TICK >= ttl
+    shown < FADE_IN || fading_out(age, ttl)
+}
+
+/// 只看淡出那一半：距上次续命 `age`，是不是已经（或下一帧就要）开始淡了。
+fn fading_out(age: Duration, ttl: Duration) -> bool {
+    age + FRAME_TICK >= ttl
+}
+
+/// 把一次送礼并进屏上已有的同款连击条目。并进去了返回 true。
+fn merge_combo(
+    entries: &mut VecDeque<Entry>,
+    combo: &Combo,
+    prefix: &str,
+    now: Instant,
+    ttl: Duration,
+) -> bool {
+    let Some(entry) = entries.iter_mut().rev().find(|entry| {
+        entry.combo.as_ref().is_some_and(|c| c.key == combo.key)
+                // 已经在淡出（或快了）的就不复活了，另起一条
+                && !fading_out(now.saturating_duration_since(entry.refreshed), ttl.mul_f32(0.85))
+    }) else {
+        return false;
+    };
+    let total = {
+        let existing = entry.combo.as_mut().expect("上面刚判断过");
+        existing.num = existing.num.saturating_add(combo.num.max(1));
+        existing.num
+    };
+    entry.text = combo_text(&combo.name, total);
+    // 礼物图可能是后来才拉到的：前缀换成最新的（带上图标占位）
+    entry.prefix = prefix.to_string();
+    entry.refreshed = now;
+    true
+}
+
+/// 礼物行的正文：「礼物名 ×N」。
+fn combo_text(name: &str, num: i64) -> String {
+    format!("{name} ×{}", num.max(1))
 }
 
 /// 新弹幕淡入的时长。
@@ -2396,7 +2506,11 @@ mod tests {
         assert_eq!(fade_in_alpha(FADE_IN), 1.0);
         assert_eq!(fade_in_alpha(Duration::from_secs(5)), 1.0);
         // 刚到手的那一瞬间也要算"有动画"，不然定时器会睡过去
-        assert!(fading(Duration::from_millis(10), Duration::from_secs(12)));
+        assert!(fading(
+            Duration::from_millis(10),
+            Duration::from_millis(10),
+            Duration::from_secs(12)
+        ));
     }
 
     #[test]
@@ -2479,11 +2593,88 @@ mod tests {
     fn fade_window_includes_the_boundary() {
         let (ttl, fade) = (Duration::from_secs(12), Duration::from_secs(1));
         // 还没到 ttl：不该按帧刷
-        assert!(!fading(ttl - Duration::from_millis(500), ttl));
+        assert!(!fading(
+            Duration::from_secs(60),
+            ttl - Duration::from_millis(500),
+            ttl
+        ));
         // 正好到点（alpha 还是 1.0）和淡出中：都得按帧刷，否则整段淡出被跳过
-        assert!(fading(ttl, ttl));
-        assert!(fading(ttl + fade / 2, ttl));
-        assert!(fading(ttl + fade, ttl));
+        assert!(fading(Duration::from_secs(60), ttl, ttl));
+        assert!(fading(Duration::from_secs(60), ttl + fade / 2, ttl));
+        assert!(fading(Duration::from_secs(60), ttl + fade, ttl));
+    }
+
+    #[test]
+    fn same_gift_combos_into_one_line() {
+        let gift = |uid: i64, id: i64, num: i64| {
+            combo_of(&DanmakuEvent::Gift(danmu_hime::protocol::Gift {
+                gift_id: id,
+                face: None,
+                img: None,
+                action: Some("投喂".into()),
+                uid,
+                uname: "弥姚暄".into(),
+                gift_name: "粉丝团灯牌".into(),
+                num,
+                coin_type: "gold".into(),
+                price: 100,
+            }))
+            .expect("礼物要有连击键")
+        };
+        let ttl = Duration::from_secs(12);
+        let t0 = Instant::now();
+        let mut entries = VecDeque::new();
+        let first = gift(1, 31738, 1);
+        entries.push_back(Entry {
+            kind: Kind::Gift,
+            prefix: "弥姚暄 投喂 ".into(),
+            text: combo_text(&first.name, first.num),
+            received: t0,
+            refreshed: t0,
+            combo: Some(first),
+        });
+        // 同一人同一礼物：并进去，数量累加，续命，入场时间不动
+        for i in 1..=12 {
+            let at = t0 + Duration::from_millis(300 * i);
+            assert!(merge_combo(
+                &mut entries,
+                &gift(1, 31738, 1),
+                "弥姚暄 投喂 ",
+                at,
+                ttl
+            ));
+        }
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].text, "粉丝团灯牌 ×13");
+        assert_eq!(entries[0].received, t0);
+        assert_eq!(entries[0].refreshed, t0 + Duration::from_millis(3600));
+        // 一次送 10 个也按 10 加
+        assert!(merge_combo(
+            &mut entries,
+            &gift(1, 31738, 10),
+            "弥姚暄 投喂 ",
+            t0,
+            ttl
+        ));
+        assert_eq!(entries[0].text, "粉丝团灯牌 ×23");
+        // 别人送的、别的礼物：不合并
+        assert!(!merge_combo(
+            &mut entries,
+            &gift(2, 31738, 1),
+            "x ",
+            t0,
+            ttl
+        ));
+        assert!(!merge_combo(&mut entries, &gift(1, 1, 1), "x ", t0, ttl));
+        // 已经快淡出了：另起一条，不把正在消失的那条拉回来
+        let late = entries[0].refreshed + ttl;
+        assert!(!merge_combo(
+            &mut entries,
+            &gift(1, 31738, 1),
+            "x ",
+            late,
+            ttl
+        ));
     }
 
     #[test]
